@@ -25,3 +25,8 @@ dependencies = [
     "sentence-transformers>=5.2.2",
     "sse>=1.2",
 ]
+
+[dependency-groups]
+dev = [
+    "flake8>=7.3.0",
+]
