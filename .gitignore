@@ -1,0 +1,52 @@
+# --- Python Temel ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Sanal Ortamlar ve Paket Yönetimi ---
+.venv/  
+venv/
+ENV/
+env/
+# uv kullanıyorsun, uv'nin geçici dosyalarını engelle:
+.uv/
+
+# --- Çevresel Değişkenler (KRİTİK GÜVENLİK) ---
+# API anahtarlarının GitHub'a gitmesini engeller
+.env
+.env.local
+.env.shared-spec
+.env.*
+!.env.example # Örnek şablonun gitmesine izin verir
+
+# --- IDE ve Editör ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- RAG ve Veri Dosyaları ---
+# Eğer vektör indekslerinin her seferinde baştan oluşmasını istiyorsan bunları kapat:
+# vector_db/faiss_index/
+# Ama küçükse ve "hazır gelsin" dersen bu satırı ekleme.
+
+# İşletim sistemi geçici dosyaları
+.DS_Store
+Thumbs.db

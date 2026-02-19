@@ -1,0 +1,42 @@
+name: RAG CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true # Adds dependency caching to speed up subsequent runs
+
+    - name: Set up Python
+      run: uv python install 3.10
+
+    # installs dependencies using uv.lock
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras --dev
+
+    - name: Lint with flake8
+      run: |
+        uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        uv run flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    # Run tests with pytest on uv environment
+    - name: Test with pytest
+      env: 
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} 
+      run: |
+        uv run pytest
