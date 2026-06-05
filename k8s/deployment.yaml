@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: rag-langchain
-          image: us-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
+          image: europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

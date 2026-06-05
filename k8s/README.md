@@ -8,25 +8,41 @@ https://chat.mammas.studio
 
 ## 1. Build and push the image
 
-Replace `PROJECT_ID` with your Google Cloud project id.
+Everything here defaults to `europe-west3`. Replace `PROJECT_ID` with your Google Cloud project id.
 
 ```bash
 gcloud artifacts repositories create rag-langchain \
   --repository-format=docker \
-  --location=us \
+  --location=europe-west3 \
   --description="RAG LangChain images"
 
-gcloud auth configure-docker us-docker.pkg.dev
+gcloud auth configure-docker europe-west3-docker.pkg.dev
 
-docker build -t us-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest .
-docker push us-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
+docker build -t europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest .
+docker push europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
 ```
 
 Then update the image in `deployment.yaml`:
 
 ```text
-us-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
+europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
 ```
+
+## Cloud Build trigger
+
+The repository includes `cloudbuild.yaml` for the `rag-trigger` trigger. It builds the Docker image, pushes it to Artifact Registry in `europe-west3`, applies the Kubernetes manifests, and waits for the rollout.
+
+Default substitutions:
+
+```text
+_REGION=europe-west3
+_GKE_CLUSTER=rag-langchain
+_GKE_NAMESPACE=rag-langchain
+_AR_REPOSITORY=rag-langchain
+_SERVICE_NAME=rag-langchain
+```
+
+If your GKE cluster name is different, update `_GKE_CLUSTER` in the trigger substitutions.
 
 ## 2. Create the runtime secret
 
