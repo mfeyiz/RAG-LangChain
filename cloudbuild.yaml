@@ -2,7 +2,7 @@ substitutions:
   _REGION: europe-west3
   _GKE_CLUSTER: rag-langchain
   _GKE_NAMESPACE: rag-langchain
-  _AR_REPOSITORY: rag-langchain
+  _AR_REPOSITORY: debate-platform-repository
   _SERVICE_NAME: rag-langchain
 
 options:

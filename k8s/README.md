@@ -11,21 +11,21 @@ https://chat.mammas.studio
 Everything here defaults to `europe-west3`. Replace `PROJECT_ID` with your Google Cloud project id.
 
 ```bash
-gcloud artifacts repositories create rag-langchain \
+gcloud artifacts repositories create debate-platform-repository \
   --repository-format=docker \
   --location=europe-west3 \
   --description="RAG LangChain images"
 
 gcloud auth configure-docker europe-west3-docker.pkg.dev
 
-docker build -t europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest .
-docker push europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
+docker build -t europe-west3-docker.pkg.dev/PROJECT_ID/debate-platform-repository/rag-langchain:latest .
+docker push europe-west3-docker.pkg.dev/PROJECT_ID/debate-platform-repository/rag-langchain:latest
 ```
 
 Then update the image in `deployment.yaml`:
 
 ```text
-europe-west3-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
+europe-west3-docker.pkg.dev/PROJECT_ID/debate-platform-repository/rag-langchain:latest
 ```
 
 ## Cloud Build trigger
@@ -38,7 +38,7 @@ Default substitutions:
 _REGION=europe-west3
 _GKE_CLUSTER=rag-langchain
 _GKE_NAMESPACE=rag-langchain
-_AR_REPOSITORY=rag-langchain
+_AR_REPOSITORY=debate-platform-repository
 _SERVICE_NAME=rag-langchain
 ```
 
