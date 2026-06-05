@@ -1,38 +1,57 @@
-# RAG Chatbot with OpenRouter
+# RAG Multi-Agent System
 
-OpenRouter API kullanarak akıllı dokümantasyon arama sistemi.
+FastAPI, LangGraph, BGE-M3, Qdrant, hybrid retrieval, BGE reranking, and optional RAGAS/DeepEval evaluation.
 
-## Özellikler
+## Pipeline
 
-- **Akıllı Tool Kullanımı**: Model, sadece gerektiğinde doküman araması yapar
-- **Genel Sohbet**: "Merhaba" gibi basit mesajlara direkt cevap verir
-- **Streaming Yanıtlar**: Gerçek zamanlı yanıt akışı
-- **Vector DB**: FAISS ile yerel dokümantasyon arama
+```text
+Documents
+  -> Semantic Chunking
+  -> Metadata Extraction
+  -> BGE-M3 Embeddings
+  -> Qdrant + corpus.jsonl
 
-## Kurulum
+User Query
+  -> Query Rewrite
+  -> BM25 + Dense Retrieval
+  -> BGE Reranker
+  -> Top 5 Context
+  -> GPT / Gemini / Claude compatible LLM
+  -> Answer with citations
 
-1. Gerekli paketleri yükleyin:
+Evaluation
+  -> RAGAS + DeepEval
+```
+
+## Setup
+
 ```bash
-pip install flask openai langchain-ollama langchain-community faiss-cpu python-dotenv pypdf
+uv sync --dev
 ```
 
-2. `.env` dosyasına OpenRouter API anahtarınızı ekleyin:
-```
-OPENROUTER_API_KEY=your_actual_api_key
-```
+Create `.env`:
 
-3. Vector veritabanını oluşturun (ilk çalıştırmada):
 ```bash
-python RAG/services/rag_service.py
+OPENROUTER_API_KEY=your_key
 ```
 
-4. Uygulamayı başlatın:
+Build the retrieval index:
+
 ```bash
-python RAG/app.py
+uv run python RAG/services/rag_service.py
 ```
 
-## Kullanım
+Run the app:
 
-- Tarayıcıdan `http://localhost:5000` adresine gidin
-- "Merhaba" yazın → Doküman araması yapmadan cevap verir
-- Teknik soru sorun → Otomatik olarak doküman araması yapar ve cevap verir
+```bash
+uv run python RAG/app.py
+```
+
+Open `http://localhost:8000`.
+
+## Notes
+
+- `RAG/services/rag_service.py` builds `RAG/vector_db/corpus.jsonl` and a local Qdrant collection under `RAG/vector_db/qdrant`.
+- `RAG/services/retrieval.py` merges BM25 and Qdrant dense candidates, then reranks with `BAAI/bge-reranker-large`.
+- If Qdrant or the reranker is unavailable, the app falls back gracefully to corpus/BM25 retrieval.
+- The old FAISS and unused tool-calling service path have been removed.

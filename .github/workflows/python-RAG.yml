@@ -22,7 +22,7 @@ jobs:
         enable-cache: true # Adds dependency caching to speed up subsequent runs
 
     - name: Set up Python
-      run: uv python install 3.10
+      run: uv python install 3.11
 
     # installs dependencies using uv.lock
     - name: Install dependencies
@@ -39,4 +39,4 @@ jobs:
       env: 
         OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} 
       run: |
-        uv run pytest
+        uv run pytest -q
