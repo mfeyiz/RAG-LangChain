@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-langchain
+  namespace: rag-langchain
+  labels:
+    app: rag-langchain
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-langchain
+  template:
+    metadata:
+      labels:
+        app: rag-langchain
+    spec:
+      containers:
+        - name: rag-langchain
+          image: us-docker.pkg.dev/PROJECT_ID/rag-langchain/rag-langchain:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: OPENROUTER_API_KEY
+            - name: RAG_ENABLE_RERANKER
+              value: "1"
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: SENTENCE_TRANSFORMERS_HOME
+              value: /cache/sentence-transformers
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache
+      volumes:
+        - name: model-cache
+          emptyDir: {}

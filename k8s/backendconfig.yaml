@@ -1,0 +1,13 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: rag-langchain-backend
+  namespace: rag-langchain
+spec:
+  timeoutSec: 300
+  connectionDraining:
+    drainingTimeoutSec: 30
+  healthCheck:
+    requestPath: /healthz
+    port: 8000
+    type: HTTP

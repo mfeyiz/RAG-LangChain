@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-langchain
+  namespace: rag-langchain
+  annotations:
+    cloud.google.com/backend-config: '{"default": "rag-langchain-backend"}'
+    cloud.google.com/neg: '{"ingress": true}'
+  labels:
+    app: rag-langchain
+spec:
+  type: ClusterIP
+  selector:
+    app: rag-langchain
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

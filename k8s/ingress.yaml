@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rag-langchain
+  namespace: rag-langchain
+  annotations:
+    kubernetes.io/ingress.class: gce
+    networking.gke.io/managed-certificates: rag-langchain-cert
+    networking.gke.io/v1beta1.FrontendConfig: rag-langchain-frontend
+spec:
+  rules:
+    - host: chat.mammas.studio
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80

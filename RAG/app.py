@@ -18,6 +18,11 @@ app = FastAPI(title="RAG Multi-Agent System")
 graph = create_graph()
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))

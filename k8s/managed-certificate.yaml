@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: rag-langchain-cert
+  namespace: rag-langchain
+spec:
+  domains:
+    - chat.mammas.studio
