@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm
+from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 
 
 REVIEWER_SYSTEM_PROMPT = """You are a groundedness quality assurance specialist. Evaluate the prepared response.
@@ -25,41 +26,54 @@ Return ONLY valid JSON:
 If insufficient, set approved to false and keep feedback under 2 sentences."""
 
 
-def reviewer_node(state: AgentState) -> dict:
+async def reviewer_node(state: AgentState) -> dict:
     llm = get_llm()
 
-    messages = [SystemMessage(content=REVIEWER_SYSTEM_PROMPT)]
+    with traced_observation("reviewer", input_payload={"query": state["query"]}) as span:
+        messages = [SystemMessage(content=REVIEWER_SYSTEM_PROMPT)]
 
-    review_content = f"Question: {state['query']}"
+        review_content = f"Question: {state['query']}"
 
-    if state.get("research_results"):
-        review_content += f"\n\nResearch Results:\n{state['research_results']}"
+        if state.get("research_results"):
+            review_content += f"\n\nResearch Results:\n{state['research_results']}"
 
-    review_content += f"\n\nPrepared Response:\n{state['draft_response']}"
+        review_content += f"\n\nPrepared Response:\n{state['draft_response']}"
 
-    messages.append(HumanMessage(content=review_content))
+        messages.append(HumanMessage(content=review_content))
 
-    response = llm.invoke(messages)
-    decision = _parse_review(response.content)
-    feedback = decision["feedback"]
+        response = await invoke_with_langfuse(llm, messages)
+        decision = _parse_review(response.content)
+        feedback = decision["feedback"]
 
-    revision_count = state.get("revision_count", 0)
+        revision_count = state.get("revision_count", 0)
 
-    if decision["approved"] or revision_count >= 2:
-        print(f"[Reviewer] Approved (revisions: {revision_count})")
+        if decision["approved"] or revision_count >= 2:
+            print(f"[Reviewer] Approved (revisions: {revision_count})")
+            await trace_event(
+                state["trace_id"],
+                "reviewer.approved",
+                {"revision_count": revision_count, "feedback": feedback},
+            )
+            span.update(output={"approved": True, "revision_count": revision_count})
+            return {
+                "final_response": state["draft_response"],
+                "review_feedback": "",
+                "messages": [AIMessage(content="Response approved.")],
+            }
+
+        print(f"[Reviewer] Revision requested: {feedback[:100]}")
+        await trace_event(
+            state["trace_id"],
+            "reviewer.revision_requested",
+            {"revision_count": revision_count + 1, "feedback": feedback},
+        )
+        span.update(output={"approved": False, "revision_count": revision_count + 1})
         return {
-            "final_response": state["draft_response"],
-            "review_feedback": "",
-            "messages": [AIMessage(content="Response approved.")],
+            "review_feedback": feedback,
+            "revision_count": revision_count + 1,
+            "draft_response": "",
+            "messages": [AIMessage(content=f"Revision requested: {feedback[:100]}")],
         }
-
-    print(f"[Reviewer] Revision requested: {feedback[:100]}")
-    return {
-        "review_feedback": feedback,
-        "revision_count": revision_count + 1,
-        "draft_response": "",
-        "messages": [AIMessage(content=f"Revision requested: {feedback[:100]}")],
-    }
 
 
 def _parse_review(content: str) -> dict:

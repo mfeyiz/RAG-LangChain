@@ -2,7 +2,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm
-from RAG.services.retrieval import FINAL_CONTEXT_K, retrieve_context
+from RAG.services.retrieval import FINAL_CONTEXT_K, retrieve_context_async
+from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 
 
 QUERY_REWRITE_PROMPT = """Rewrite the user's question into a concise retrieval query.
@@ -14,39 +15,53 @@ Rules:
 - Use the same language as the user unless proper nouns require otherwise."""
 
 
-def researcher_node(state: AgentState) -> dict:
+async def researcher_node(state: AgentState) -> dict:
     original_query = state["query"]
-    rewritten_query = rewrite_query(original_query)
+    with traced_observation("researcher", input_payload={"query": original_query}) as span:
+        rewritten_query = await rewrite_query(original_query)
 
-    context, metadata = retrieve_context(rewritten_query, top_k=FINAL_CONTEXT_K)
-    result_count = len(metadata)
+        context, metadata = await retrieve_context_async(rewritten_query, top_k=FINAL_CONTEXT_K)
+        result_count = len(metadata)
+        await trace_event(
+            state["trace_id"],
+            "researcher.retrieval",
+            {
+                "query": original_query,
+                "rewritten_query": rewritten_query,
+                "result_count": result_count,
+                "results": metadata,
+            },
+        )
+        span.update(output={"rewritten_query": rewritten_query, "result_count": result_count})
 
-    print(f"\n[Researcher] Query: {original_query}")
-    print(f"[Researcher] Rewritten: {rewritten_query}")
-    print(f"[Researcher] {result_count} context chunks selected.")
+        print(f"\n[Researcher] Query: {original_query}")
+        print(f"[Researcher] Rewritten: {rewritten_query}")
+        print(f"[Researcher] {result_count} context chunks selected.")
 
-    return {
-        "research_results": context,
-        "search_metadata": metadata,
-        "messages": [
-            AIMessage(
-                content=(
-                    "Research completed: "
-                    f"{result_count} chunks found for query: {rewritten_query}"
+        return {
+            "research_results": context,
+            "search_metadata": metadata,
+            "rewritten_query": rewritten_query,
+            "messages": [
+                AIMessage(
+                    content=(
+                        "Research completed: "
+                        f"{result_count} chunks found for query: {rewritten_query}"
+                    )
                 )
-            )
-        ],
-    }
+            ],
+        }
 
 
-def rewrite_query(query: str) -> str:
+async def rewrite_query(query: str) -> str:
     try:
         llm = get_llm()
-        response = llm.invoke(
+        response = await invoke_with_langfuse(
+            llm,
             [
                 SystemMessage(content=QUERY_REWRITE_PROMPT),
                 HumanMessage(content=query),
-            ]
+            ],
         )
         rewritten = response.content.strip().strip('"')
         return rewritten or query

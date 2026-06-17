@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from RAG.agents.state import AgentState, AgentRole
+from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 
 
 env_path = Path(__file__).parent.parent.parent / '.env'
@@ -37,54 +38,74 @@ Decision rules:
 Return ONLY one of these values: researcher, writer, reviewer, FINISH"""
 
 
-def supervisor_node(state: AgentState) -> dict:
-    if state.get("final_response"):
-        print("[Supervisor] Decision: finish")
-        return {"next_agent": "finish"}
+async def supervisor_node(state: AgentState) -> dict:
+    with traced_observation(
+        "supervisor",
+        input_payload={
+            "query": state["query"],
+            "has_research": bool(state.get("research_results")),
+            "has_draft": bool(state.get("draft_response")),
+            "has_feedback": bool(state.get("review_feedback")),
+            "revision_count": state.get("revision_count", 0),
+        },
+    ) as span:
+        if state.get("final_response"):
+            print("[Supervisor] Decision: finish")
+            await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "finish"})
+            span.update(output={"next_agent": "finish"})
+            return {"next_agent": "finish"}
 
-    if state.get("draft_response"):
-        print("[Supervisor] Decision: reviewer")
-        return {"next_agent": "reviewer"}
+        if state.get("draft_response"):
+            print("[Supervisor] Decision: reviewer")
+            await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "reviewer"})
+            span.update(output={"next_agent": "reviewer"})
+            return {"next_agent": "reviewer"}
 
-    if state.get("review_feedback"):
-        print("[Supervisor] Decision: writer")
-        return {"next_agent": "writer"}
+        if state.get("review_feedback"):
+            print("[Supervisor] Decision: writer")
+            await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "writer"})
+            span.update(output={"next_agent": "writer"})
+            return {"next_agent": "writer"}
 
-    if state.get("research_results"):
-        print("[Supervisor] Decision: writer")
-        return {"next_agent": "writer"}
+        if state.get("research_results"):
+            print("[Supervisor] Decision: writer")
+            await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "writer"})
+            span.update(output={"next_agent": "writer"})
+            return {"next_agent": "writer"}
 
-    llm = get_llm()
-    
-    messages = [SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT)]
-    
-    context_parts = [f"User query: {state['query']}"]
-    
-    if state.get("research_results"):
-        context_parts.append(f"Research completed: {len(state['research_results'])} characters of results found.")
-    
-    if state.get("draft_response"):
-        context_parts.append(f"Response drafted: {len(state['draft_response'])} characters.")
-    
-    if state.get("review_feedback"):
-        context_parts.append(f"Reviewer feedback: {state['review_feedback']}")
-    
-    context_parts.append(f"Revision count: {state.get('revision_count', 0)}")
-    
-    messages.append(HumanMessage(content="\n".join(context_parts)))
-    
-    response = llm.invoke(messages)
-    decision = response.content.strip().lower()
-    
-    valid_decisions = ["researcher", "writer", "reviewer", "finish"]
-    if decision not in valid_decisions:
-        for d in valid_decisions:
-            if d in decision:
-                decision = d
-                break
-        else:
-            decision = "writer"
-    
-    print(f"[Supervisor] Decision: {decision}")
-    
-    return {"next_agent": decision}
+        llm = get_llm()
+
+        messages = [SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT)]
+
+        context_parts = [f"User query: {state['query']}"]
+
+        if state.get("research_results"):
+            context_parts.append(f"Research completed: {len(state['research_results'])} characters of results found.")
+
+        if state.get("draft_response"):
+            context_parts.append(f"Response drafted: {len(state['draft_response'])} characters.")
+
+        if state.get("review_feedback"):
+            context_parts.append(f"Reviewer feedback: {state['review_feedback']}")
+
+        context_parts.append(f"Revision count: {state.get('revision_count', 0)}")
+
+        messages.append(HumanMessage(content="\n".join(context_parts)))
+
+        response = await invoke_with_langfuse(llm, messages)
+        decision = response.content.strip().lower()
+
+        valid_decisions = ["researcher", "writer", "reviewer", "finish"]
+        if decision not in valid_decisions:
+            for d in valid_decisions:
+                if d in decision:
+                    decision = d
+                    break
+            else:
+                decision = "writer"
+
+        print(f"[Supervisor] Decision: {decision}")
+        await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": decision})
+        span.update(output={"next_agent": decision})
+
+        return {"next_agent": decision}

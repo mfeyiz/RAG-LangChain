@@ -28,6 +28,18 @@ spec:
                 secretKeyRef:
                   name: rag-langchain-secrets
                   key: OPENROUTER_API_KEY
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: LANGFUSE_SECRET_KEY
+            - name: LANGFUSE_ENABLED
+              value: "1"
             - name: RAG_ENABLE_RERANKER
               value: "1"
             - name: HF_HOME

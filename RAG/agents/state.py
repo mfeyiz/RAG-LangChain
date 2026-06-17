@@ -3,7 +3,7 @@ from langchain_core.messages import BaseMessage
 import operator
 
 
-AgentRole = Literal["supervisor", "researcher", "writer", "reviewer"]
+AgentRole = Literal["supervisor", "researcher", "writer", "reviewer", "finish"]
 
 
 class AgentState(TypedDict):
@@ -16,3 +16,7 @@ class AgentState(TypedDict):
     review_feedback: str
     revision_count: int
     search_metadata: list
+    user_id: str
+    session_id: str
+    trace_id: str
+    rewritten_query: str

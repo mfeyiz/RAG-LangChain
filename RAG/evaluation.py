@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from RAG.services.tracing import read_trace
+
 
 @dataclass
 class EvaluationSample:
@@ -59,3 +61,30 @@ def run_deepeval_evaluation(samples: list[EvaluationSample]):
             AnswerRelevancyMetric(),
         ],
     )
+
+
+def sample_from_trace(trace_id: str, ground_truth: str = "") -> EvaluationSample:
+    events = read_trace(trace_id)
+    request = _payload_for(events, "request.received")
+    retrieval = _payload_for(events, "researcher.retrieval")
+    writer = _payload_for(events, "writer.response")
+
+    contexts = [
+        item.get("content", "")
+        for item in retrieval.get("results", [])
+        if item.get("content")
+    ]
+
+    return EvaluationSample(
+        question=request.get("query", ""),
+        answer=writer.get("answer", ""),
+        contexts=contexts,
+        ground_truth=ground_truth,
+    )
+
+
+def _payload_for(events: list[dict], name: str) -> dict:
+    for event in reversed(events):
+        if event.get("event") == name:
+            return event.get("payload", {})
+    return {}

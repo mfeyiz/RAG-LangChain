@@ -1,7 +1,10 @@
+import asyncio
+import hashlib
 import json
 import math
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -37,11 +40,37 @@ class RetrievalCandidate:
             return self.rerank_score
         return self.dense_score + self.bm25_score
 
+    def to_dict(self) -> dict:
+        return {
+            "doc_id": self.doc_id,
+            "content": self.content,
+            "metadata": self.metadata,
+            "dense_score": self.dense_score,
+            "bm25_score": self.bm25_score,
+            "rerank_score": self.rerank_score,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        rerank_score = data.get("rerank_score")
+        return cls(
+            doc_id=str(data.get("doc_id", "")),
+            content=str(data.get("content", "")),
+            metadata=data.get("metadata", {}),
+            dense_score=float(data.get("dense_score", 0.0) or 0.0),
+            bm25_score=float(data.get("bm25_score", 0.0) or 0.0),
+            rerank_score=float(rerank_score) if rerank_score is not None else None,
+        )
+
 
 def retrieve_context(query: str, top_k: int = FINAL_CONTEXT_K) -> tuple[str, list[dict]]:
     retriever = get_retriever()
     candidates = retriever.retrieve(query, top_k=top_k)
     return format_docs(candidates), search_metadata(candidates)
+
+
+async def retrieve_context_async(query: str, top_k: int = FINAL_CONTEXT_K) -> tuple[str, list[dict]]:
+    return await asyncio.to_thread(retrieve_context, query, top_k)
 
 
 @lru_cache(maxsize=1)
@@ -58,6 +87,11 @@ class HybridRetriever:
 
     def retrieve(self, query: str, top_k: int = FINAL_CONTEXT_K) -> list[RetrievalCandidate]:
         rewritten_query = query.strip()
+        cached = _get_cached_results(rewritten_query, top_k)
+        if cached is not None:
+            print(f"[Retrieval] Cache hit for query: {rewritten_query}")
+            return cached
+
         dense_candidates = self._dense_search(rewritten_query)
         bm25_candidates = self.bm25.search(rewritten_query, k=BM25_SEARCH_K)
         merged = _merge_candidates(dense_candidates, bm25_candidates)
@@ -66,7 +100,9 @@ class HybridRetriever:
             return []
 
         reranked = rerank_candidates(rewritten_query, merged)
-        return reranked[:top_k]
+        selected = reranked[:top_k]
+        _cache_results(rewritten_query, top_k, selected)
+        return selected
 
     def _dense_search(self, query: str) -> list[RetrievalCandidate]:
         if self.qdrant is None:
@@ -316,3 +352,105 @@ def _snippet(content: str, content_limit: int) -> str:
     if len(content) <= content_limit:
         return content
     return f"{content[:content_limit].rstrip()}..."
+
+
+_RETRIEVAL_MEMORY_CACHE: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _get_cached_results(query: str, top_k: int) -> list[RetrievalCandidate] | None:
+    ttl = _cache_ttl_seconds()
+    if ttl <= 0:
+        return None
+
+    key = _cache_key(query, top_k)
+    cached = _redis_get(key) or _memory_get(key, ttl)
+    if cached is None:
+        return None
+
+    return [RetrievalCandidate.from_dict(item) for item in cached]
+
+
+def _cache_results(query: str, top_k: int, candidates: list[RetrievalCandidate]):
+    ttl = _cache_ttl_seconds()
+    if ttl <= 0:
+        return
+
+    key = _cache_key(query, top_k)
+    payload = [candidate.to_dict() for candidate in candidates]
+    if not _redis_set(key, payload, ttl):
+        _RETRIEVAL_MEMORY_CACHE[key] = (time.time(), payload)
+
+
+def _memory_get(key: str, ttl: int) -> list[dict] | None:
+    cached = _RETRIEVAL_MEMORY_CACHE.get(key)
+    if cached is None:
+        return None
+
+    created_at, payload = cached
+    if time.time() - created_at > ttl:
+        _RETRIEVAL_MEMORY_CACHE.pop(key, None)
+        return None
+    return payload
+
+
+def _redis_get(key: str) -> list[dict] | None:
+    client = _load_redis_client()
+    if client is None:
+        return None
+
+    raw = client.get(key)
+    return json.loads(raw) if raw else None
+
+
+def _redis_set(key: str, payload: list[dict], ttl: int) -> bool:
+    client = _load_redis_client()
+    if client is None:
+        return False
+
+    try:
+        client.setex(key, ttl, json.dumps(payload, ensure_ascii=False))
+        return True
+    except Exception as exc:
+        print(f"[Retrieval] Redis write failed, falling back to memory cache: {exc}")
+        return False
+
+
+_redis_client = None
+_redis_retry_after: float = 0.0
+_REDIS_RETRY_INTERVAL = 30.0
+
+
+def _load_redis_client():
+    global _redis_client, _redis_retry_after
+    if _redis_client is not None:
+        return _redis_client
+
+    now = time.time()
+    if now < _redis_retry_after:
+        return None
+
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if not redis_url:
+        return None
+
+    try:
+        from redis import Redis
+
+        client = Redis.from_url(redis_url, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        return client
+    except Exception as exc:
+        print(f"[Retrieval] Redis unavailable, retrying in {_REDIS_RETRY_INTERVAL}s: {exc}")
+        _redis_retry_after = now + _REDIS_RETRY_INTERVAL
+        return None
+
+
+def _cache_key(query: str, top_k: int) -> str:
+    normalized = re.sub(r"\s+", " ", query.strip().lower())
+    digest = hashlib.sha256(normalized.encode()).hexdigest()[:16]
+    return f"rag:retrieval:{top_k}:{digest}"
+
+
+def _cache_ttl_seconds() -> int:
+    return int(os.getenv("RETRIEVAL_CACHE_TTL_SECONDS", "900"))

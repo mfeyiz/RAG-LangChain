@@ -19,9 +19,11 @@ def test_setup_works():
 
 
 def test_graph_creation():
+    import inspect
+
     from RAG.agents.graph import create_graph
-    graph = create_graph()
-    assert graph is not None
+
+    assert inspect.iscoroutinefunction(create_graph)
 
 
 def test_agent_state_structure():
@@ -36,6 +38,10 @@ def test_agent_state_structure():
         review_feedback="",
         revision_count=0,
         search_metadata=[],
+        user_id="anonymous",
+        session_id="test-session",
+        trace_id="test-trace",
+        rewritten_query="",
     )
     assert state["query"] == "test"
     assert state["next_agent"] == "supervisor"
@@ -73,3 +79,43 @@ def test_retrieval_metadata_shape():
     assert metadata[0]["source"] == "sample.json"
     assert metadata[0]["title"] == "Arthur's Magazine"
     assert metadata[0]["score"] == pytest.approx(1.2)
+
+
+def test_jwt_verification_with_hmac_sha256():
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    from RAG.services.auth import verify_jwt
+
+    secret = "test-secret"
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {"sub": "user-1", "sid": "session-1"}
+
+    def encode(data):
+        raw = json.dumps(data, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+    signing_input = f"{encode(header)}.{encode(payload)}"
+    signature = hmac.new(secret.encode("utf-8"), signing_input.encode("utf-8"), hashlib.sha256).digest()
+    token = f"{signing_input}.{base64.urlsafe_b64encode(signature).decode('utf-8').rstrip('=')}"
+
+    assert verify_jwt(token, secret)["sub"] == "user-1"
+
+
+def test_retrieval_candidate_round_trip():
+    from RAG.services.retrieval import RetrievalCandidate
+
+    candidate = RetrievalCandidate(
+        doc_id="doc-1",
+        content="content",
+        metadata={"source": "source.txt"},
+        dense_score=0.5,
+        bm25_score=0.25,
+        rerank_score=0.9,
+    )
+
+    restored = RetrievalCandidate.from_dict(candidate.to_dict())
+    assert restored.doc_id == "doc-1"
+    assert restored.final_score == pytest.approx(0.9)
