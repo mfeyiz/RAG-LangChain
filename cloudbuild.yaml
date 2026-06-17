@@ -1,6 +1,6 @@
 substitutions:
   _REGION: europe-west4
-  _GKE_CLUSTER: deployment-1
+  _GKE_CLUSTER: deployment-1-cluster
   _GKE_NAMESPACE: rag-yeni
   _AR_REPOSITORY: rag-artifact-registery
   _SERVICE_NAME: rag-langchain
