@@ -2,7 +2,7 @@ substitutions:
   _REGION: europe-west3
   _GKE_CLUSTER: rag-langchain
   _GKE_NAMESPACE: rag-langchain
-  _AR_REPOSITORY: debate-platform-repository
+  _AR_REPOSITORY: rag-artifact-registery
   _SERVICE_NAME: rag-langchain
 
 options:
@@ -10,19 +10,19 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  - id: ensure-artifact-registry-repository
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+  # ── 1. Lint + Unit Tests ────────────────────────────────────────────────
+  - id: lint-and-test
+    name: python:3.11-slim
     entrypoint: bash
     args:
       - -c
       - |
-        gcloud artifacts repositories describe "$_AR_REPOSITORY" \
-          --location="$_REGION" \
-        || gcloud artifacts repositories create "$_AR_REPOSITORY" \
-          --repository-format=docker \
-          --location="$_REGION" \
-          --description="RAG LangChain images"
+        pip install --quiet uv
+        uv sync --frozen --group dev
+        uv run flake8 RAG tests --max-line-length=120 --extend-ignore=E501,W503
+        uv run pytest tests/ -v --tb=short
 
+  # ── 2. Build Docker Image ───────────────────────────────────────────────
   - id: build-image
     name: gcr.io/cloud-builders/docker
     args:
@@ -33,6 +33,26 @@ steps:
       - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
       - .
 
+  # ── 3. Security Scan (fail on CRITICAL CVEs) ────────────────────────────
+  - id: save-image-tarball
+    name: gcr.io/cloud-builders/docker
+    args:
+      - save
+      - -o
+      - /workspace/image.tar
+      - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$SHORT_SHA
+
+  - id: scan-image
+    name: aquasec/trivy:latest
+    args:
+      - image
+      - --exit-code=1
+      - --severity=CRITICAL
+      - --no-progress
+      - --input
+      - /workspace/image.tar
+
+  # ── 4. Push ─────────────────────────────────────────────────────────────
   - id: push-image-sha
     name: gcr.io/cloud-builders/docker
     args:
@@ -45,6 +65,7 @@ steps:
       - push
       - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
 
+  # ── 5. Deploy to GKE ────────────────────────────────────────────────────
   - id: deploy-to-gke
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
     entrypoint: bash
