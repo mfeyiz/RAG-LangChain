@@ -2,7 +2,7 @@ apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
   name: rag-langchain-frontend
-  namespace: rag-langchain
+  namespace: rag-yeni
 spec:
   redirectToHttps:
     enabled: true

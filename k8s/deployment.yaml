@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rag-langchain
-  namespace: rag-langchain
+  namespace: rag-yeni
   labels:
     app: rag-langchain
 spec:
@@ -46,6 +46,8 @@ spec:
               value: /cache/huggingface
             - name: SENTENCE_TRANSFORMERS_HOME
               value: /cache/sentence-transformers
+            - name: REDIS_URL
+              value: redis://redis:6379
           readinessProbe:
             httpGet:
               path: /healthz
@@ -70,6 +72,11 @@ spec:
           volumeMounts:
             - name: model-cache
               mountPath: /cache
+            - name: qdrant-data
+              mountPath: /app/RAG/vector_db/qdrant
       volumes:
         - name: model-cache
           emptyDir: {}
+        - name: qdrant-data
+          persistentVolumeClaim:
+            claimName: qdrant-pvc

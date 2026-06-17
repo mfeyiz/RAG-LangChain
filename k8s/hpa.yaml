@@ -2,7 +2,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: rag-langchain
-  namespace: rag-langchain
+  namespace: rag-yeni
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
