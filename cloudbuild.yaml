@@ -16,11 +16,6 @@ steps:
   - id: lint-and-test
     name: python:3.11-slim
     entrypoint: bash
-    volumes:
-      - name: pip-cache
-        path: /root/.cache/pip
-      - name: uv-cache
-        path: /root/.cache/uv
     args:
       - -c
       - |
