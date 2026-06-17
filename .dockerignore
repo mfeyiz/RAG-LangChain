@@ -15,3 +15,9 @@ downloads
 dist
 build
 *.egg-info
+# test + CI artefacts not needed in the image
+tests/
+RAG/traces/
+CODE_REVIEW.md
+k8s/
+cloudbuild.yaml

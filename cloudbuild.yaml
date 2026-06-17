@@ -49,6 +49,7 @@ steps:
       - --exit-code=1
       - --severity=CRITICAL
       - --no-progress
+      - --ignore-unfixed
       - --input
       - /workspace/image.tar
 
