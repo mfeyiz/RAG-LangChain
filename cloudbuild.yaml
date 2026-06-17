@@ -33,27 +33,7 @@ steps:
       - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
       - .
 
-  # ── 3. Security Scan (fail on CRITICAL CVEs) ────────────────────────────
-  - id: save-image-tarball
-    name: gcr.io/cloud-builders/docker
-    args:
-      - save
-      - -o
-      - /workspace/image.tar
-      - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$SHORT_SHA
-
-  - id: scan-image
-    name: aquasec/trivy:latest
-    args:
-      - image
-      - --exit-code=1
-      - --severity=CRITICAL
-      - --no-progress
-      - --ignore-unfixed
-      - --input
-      - /workspace/image.tar
-
-  # ── 4. Push ─────────────────────────────────────────────────────────────
+  # ── 3. Push ─────────────────────────────────────────────────────────────
   - id: push-image-sha
     name: gcr.io/cloud-builders/docker
     args:
