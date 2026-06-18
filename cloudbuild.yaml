@@ -63,6 +63,8 @@ steps:
     args:
       - -c
       - |
+        apt-get install -y kubectl google-cloud-sdk-gke-gcloud-auth-plugin
+        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
         gcloud container clusters get-credentials "$_GKE_CLUSTER" \
           --region "$_REGION" \
           --project "$PROJECT_ID"
