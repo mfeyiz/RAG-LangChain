@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import os
@@ -14,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from RAG.agents.graph import create_graph
 from RAG.services.auth import authenticate_request
 from RAG.services.guardrails import guardrails
+from RAG.services.retrieval import models_ready, warmup_models
 from RAG.services.session_store import session_store
 from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
 
@@ -22,6 +24,7 @@ STATIC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    await asyncio.to_thread(warmup_models)
     _app.state.graph, _app.state.checkpointer = await create_graph()
     yield
     try:
@@ -47,6 +50,8 @@ app.add_middleware(
 
 @app.get("/healthz")
 async def healthz():
+    if not models_ready():
+        return JSONResponse({"status": "loading"}, status_code=503)
     return {"status": "ok"}
 
 

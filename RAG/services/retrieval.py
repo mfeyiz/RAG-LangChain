@@ -79,6 +79,23 @@ def get_retriever():
     return get_retriever._instance
 
 
+_models_ready = False
+
+
+def warmup_models() -> None:
+    """Eagerly load embedding and reranker models at startup to avoid OOM spikes on first query."""
+    global _models_ready
+    retriever = get_retriever()
+    if retriever.embeddings is None:
+        retriever.embeddings = create_embeddings()
+    _load_reranker()
+    _models_ready = True
+
+
+def models_ready() -> bool:
+    return _models_ready
+
+
 class HybridRetriever:
     def __init__(self):
         self.corpus = _load_corpus()

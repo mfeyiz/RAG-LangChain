@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - qdrant-pvc.yaml
+  - model-cache-pvc.yaml
   - redis.yaml
   - backendconfig.yaml
   - managed-certificate.yaml
