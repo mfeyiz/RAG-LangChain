@@ -14,7 +14,6 @@ const retrievalLabel = document.getElementById("retrievalLabel");
 const activeAgentMetric = document.getElementById("activeAgentMetric");
 const documentMetric = document.getElementById("documentMetric");
 const elapsedMetric = document.getElementById("elapsedMetric");
-const executeButton = document.getElementById("executeButton");
 const newSessionButton = document.getElementById("newSessionButton");
 const heroMeter = document.querySelector(".hero-meter");
 const agentCards = Array.from(document.querySelectorAll(".agent-card"));
@@ -51,6 +50,8 @@ async function sendMessage() {
     if (!message || sendButton.disabled) return;
 
     resetRunState();
+    const welcome = chatMessages.querySelector(".welcome");
+    if (welcome) welcome.remove();
     addMessage(message, "user");
     userInput.value = "";
     autoResize();
@@ -411,7 +412,6 @@ function stopElapsedTimer() {
 
 function setControlsDisabled(disabled) {
     sendButton.disabled = disabled;
-    executeButton.disabled = disabled;
     userInput.disabled = disabled;
 }
 
@@ -446,22 +446,41 @@ chatForm.addEventListener("submit", (event) => {
     sendMessage();
 });
 
-executeButton.addEventListener("click", () => sendMessage());
+const WELCOME_HTML = `
+    <div class="welcome">
+        <p class="welcome-eyebrow">Merhaba 👋</p>
+        <h1 class="welcome-title">Bugün neyi araştıralım?</h1>
+        <p class="welcome-lead">
+            Bir soru yazın. Supervisor yönlendirir, Researcher kanıt toplar,
+            Writer yanıtı kurar, Reviewer kalite kontrol yapar — her adımı
+            sağ tarafta canlı izleyebilirsiniz.
+        </p>
+        <div class="suggestion-row">
+            <button class="suggestion" type="button">Belgelerdeki ana bulguları özetle</button>
+            <button class="suggestion" type="button">İki kaynağı karşılaştır</button>
+            <button class="suggestion" type="button">Kısa bir kronoloji çıkar</button>
+        </div>
+    </div>
+`;
+
+function bindSuggestions() {
+    chatMessages.querySelectorAll(".suggestion").forEach((chip) => {
+        chip.addEventListener("click", () => {
+            userInput.value = chip.textContent.trim();
+            autoResize();
+            sendMessage();
+        });
+    });
+}
 
 newSessionButton.addEventListener("click", () => {
-    chatMessages.innerHTML = `
-        <div class="message bot-message">
-            <div class="message-avatar">AI</div>
-            <div class="message-content">
-                Yeni oturum hazir. Sorunuzu yazin; ajan akisindaki her adimi canli olarak gosterecegim.
-            </div>
-        </div>
-    `;
+    chatMessages.innerHTML = WELCOME_HTML;
+    bindSuggestions();
     eventLog.innerHTML = "";
     resetRunState();
-    updateProgress(0, "Hazir", "Idle");
-    setStatus("Idle", "");
-    logEvent("idle", "Yeni oturum baslatildi.");
+    updateProgress(0, "Hazır", "Idle");
+    setStatus("Hazır", "");
+    logEvent("idle", "Yeni oturum başlatıldı.");
     userInput.focus();
 });
 
@@ -475,7 +494,8 @@ userInput.addEventListener("keydown", (event) => {
 userInput.addEventListener("input", autoResize);
 
 window.addEventListener("load", () => {
+    bindSuggestions();
     scrollToBottom();
-    updateProgress(0, "Hazir", "Idle");
-    logEvent("idle", "Sistem hazir. Yeni bir istek bekleniyor.");
+    updateProgress(0, "Hazır", "Idle");
+    logEvent("idle", "Sistem hazır. Yeni bir istek bekleniyor.");
 });

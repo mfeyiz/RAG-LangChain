@@ -74,9 +74,24 @@ spec:
               mountPath: /cache
             - name: qdrant-data
               mountPath: /app/RAG/vector_db/qdrant
+            - name: frontend-static
+              mountPath: /app/index.html
+              subPath: index.html
+              readOnly: true
+            - name: frontend-static
+              mountPath: /app/script.js
+              subPath: script.js
+              readOnly: true
+            - name: frontend-static
+              mountPath: /app/style.css
+              subPath: style.css
+              readOnly: true
       volumes:
         - name: model-cache
           emptyDir: {}
         - name: qdrant-data
           persistentVolumeClaim:
             claimName: qdrant-pvc
+        - name: frontend-static
+          configMap:
+            name: frontend-static

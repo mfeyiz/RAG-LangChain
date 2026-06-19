@@ -73,9 +73,10 @@ async def retrieve_context_async(query: str, top_k: int = FINAL_CONTEXT_K) -> tu
     return await asyncio.to_thread(retrieve_context, query, top_k)
 
 
-@lru_cache(maxsize=1)
 def get_retriever():
-    return HybridRetriever()
+    if not hasattr(get_retriever, "_instance") or not get_retriever._instance.qdrant:
+        get_retriever._instance = HybridRetriever()
+    return get_retriever._instance
 
 
 class HybridRetriever:
@@ -292,13 +293,17 @@ def _load_corpus() -> list[RetrievalCandidate]:
 
 
 def _load_qdrant_client():
-    if not QDRANT_PATH.exists():
-        return None
-
     try:
         from qdrant_client import QdrantClient
 
-        client = QdrantClient(path=str(QDRANT_PATH))
+        qdrant_url = os.getenv("QDRANT_URL", "").strip()
+        if qdrant_url:
+            client = QdrantClient(url=qdrant_url)
+        else:
+            if not QDRANT_PATH.exists():
+                return None
+            client = QdrantClient(path=str(QDRANT_PATH))
+
         if not client.collection_exists(COLLECTION_NAME):
             return None
         return client

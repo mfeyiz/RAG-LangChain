@@ -3,233 +3,160 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aether Agent Control</title>
+    <title>RAG Agent · Çok Ajanlı Asistan</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="app-shell">
-        <aside class="side-nav">
-            <div class="nav-top">
-                <div class="brand">
-                    <div class="brand-mark">
-                        <span class="material-symbols-outlined">memory</span>
-                    </div>
-                    <div>
-                        <p class="brand-title">Agent Control</p>
-                        <p class="brand-subtitle">Operational Center</p>
-                    </div>
-                </div>
-
-                <nav class="nav-links" aria-label="Agent roles">
-                    <a class="nav-link active" href="#supervisorCard">
-                        <span class="material-symbols-outlined">manage_accounts</span>
-                        <span>Supervisor</span>
-                    </a>
-                    <a class="nav-link" href="#researcherCard">
-                        <span class="material-symbols-outlined">manage_search</span>
-                        <span>Researcher</span>
-                    </a>
-                    <a class="nav-link" href="#writerCard">
-                        <span class="material-symbols-outlined">edit_note</span>
-                        <span>Writer</span>
-                    </a>
-                    <a class="nav-link" href="#reviewerCard">
-                        <span class="material-symbols-outlined">fact_check</span>
-                        <span>Reviewer</span>
-                    </a>
-                </nav>
+    <header class="top-bar">
+        <div class="brand">
+            <div class="brand-mark">
+                <span class="material-symbols-outlined">hub</span>
             </div>
-
-            <div class="nav-bottom">
-                <button class="primary-cta" id="newSessionButton" type="button">
-                    <span class="material-symbols-outlined">add</span>
-                    Yeni Oturum
-                </button>
-                <a class="utility-link" href="#eventLog">
-                    <span class="material-symbols-outlined">terminal</span>
-                    Logs
-                </a>
+            <div class="brand-text">
+                <p class="brand-title">RAG Agent</p>
+                <p class="brand-subtitle">Çok ajanlı asistan</p>
             </div>
-        </aside>
-
-        <div class="main-stage">
-            <header class="top-bar">
-                <div class="top-title">
-                    <p class="eyebrow">Live Session</p>
-                    <h1>Aether Monitoring</h1>
-                </div>
-                <nav class="top-tabs" aria-label="Monitoring tabs">
-                    <a class="active" href="#dashboard">Dashboard</a>
-                    <a href="#telemetry">Telemetry</a>
-                    <a href="#eventLog">Logs</a>
-                    <a href="#retrievalPanel">Retrieval</a>
-                </nav>
-                <div class="top-actions">
-                    <span class="status-pill" id="statusBadge">
-                        <span class="status-dot"></span>
-                        Idle
-                    </span>
-                    <button class="execute-button" id="executeButton" type="button">
-                        <span class="material-symbols-outlined">play_arrow</span>
-                        Execute Task
-                    </button>
-                </div>
-            </header>
-
-            <main class="dashboard" id="dashboard">
-                <section class="hero-panel">
-                    <div class="hero-copy">
-                        <p class="eyebrow">Graph runtime</p>
-                        <h2>Adim adim gozlemlenebilir RAG ajan akisi</h2>
-                        <p>Supervisor karar verir, Researcher kanitlari toplar, Writer yaniti kurar, Reviewer kalite kontrol yapar. Her asama canli olarak isaretlenir.</p>
-                    </div>
-                    <div class="hero-meter" aria-label="Workflow progress">
-                        <div class="meter-value" id="progressPercent">0%</div>
-                        <div class="meter-label" id="progressLabel">Hazir</div>
-                    </div>
-                </section>
-
-                <section class="flow-panel" aria-label="Agent workflow">
-                    <div class="panel-header">
-                        <div>
-                            <h2>Akis Haritasi</h2>
-                            <p>LangGraph dugumleri ve siradaki karar canli takip edilir.</p>
-                        </div>
-                        <span class="timestamp" id="currentAgentLabel">Beklemede</span>
-                    </div>
-
-                    <div class="agent-flow">
-                        <article class="agent-card" id="supervisorCard" data-agent="supervisor">
-                            <div class="agent-icon">
-                                <span class="material-symbols-outlined">manage_accounts</span>
-                            </div>
-                            <div>
-                                <p>Supervisor</p>
-                                <span id="supervisorStatus">Siradaki ajani secer</span>
-                            </div>
-                        </article>
-                        <div class="flow-connector" aria-hidden="true"></div>
-                        <article class="agent-card" id="researcherCard" data-agent="researcher">
-                            <div class="agent-icon">
-                                <span class="material-symbols-outlined">manage_search</span>
-                            </div>
-                            <div>
-                                <p>Researcher</p>
-                                <span id="researcherStatus">Vektor arama yapar</span>
-                            </div>
-                        </article>
-                        <div class="flow-connector" aria-hidden="true"></div>
-                        <article class="agent-card" id="writerCard" data-agent="writer">
-                            <div class="agent-icon">
-                                <span class="material-symbols-outlined">edit_note</span>
-                            </div>
-                            <div>
-                                <p>Writer</p>
-                                <span id="writerStatus">Yaniti sentezler</span>
-                            </div>
-                        </article>
-                        <div class="flow-connector" aria-hidden="true"></div>
-                        <article class="agent-card" id="reviewerCard" data-agent="reviewer">
-                            <div class="agent-icon">
-                                <span class="material-symbols-outlined">fact_check</span>
-                            </div>
-                            <div>
-                                <p>Reviewer</p>
-                                <span id="reviewerStatus">Kaliteyi onaylar</span>
-                            </div>
-                        </article>
-                    </div>
-
-                    <div class="progress-block">
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="progressBar"></div>
-                        </div>
-                        <div class="progress-meta">
-                            <span>Akis Durumu</span>
-                            <span id="flowStateText">Idle</span>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="metrics-panel" aria-label="Runtime metrics">
-                    <div class="metric-card">
-                        <span class="material-symbols-outlined">route</span>
-                        <p>Calisan Dugum</p>
-                        <strong id="activeAgentMetric">0</strong>
-                        <small>Bu oturumda</small>
-                    </div>
-                    <div class="metric-card">
-                        <span class="material-symbols-outlined">database_search</span>
-                        <p>Bulunan Dokuman</p>
-                        <strong id="documentMetric">0</strong>
-                        <small>Top-K retrieval</small>
-                    </div>
-                    <div class="metric-card">
-                        <span class="material-symbols-outlined">timer</span>
-                        <p>Gecen Sure</p>
-                        <strong id="elapsedMetric">0.0s</strong>
-                        <small>Canli olcum</small>
-                    </div>
-                </section>
-
-                <section class="chat-panel" aria-label="Conversation">
-                    <div class="panel-header">
-                        <div>
-                            <h2>Konusma Paneli</h2>
-                            <p>Streaming cevap ve ara geri bildirimler burada gorunur.</p>
-                        </div>
-                        <span class="timestamp">RAG v1.4</span>
-                    </div>
-                    <div class="chat-messages" id="chatMessages">
-                        <div class="message bot-message">
-                            <div class="message-avatar">AI</div>
-                            <div class="message-content">
-                                Merhaba. Sorunuzu yazin; ajan akisindaki her adimi canli olarak gosterecegim.
-                            </div>
-                        </div>
-                    </div>
-                    <form class="chat-input-container" id="chatForm">
-                        <textarea id="userInput" placeholder="Mesajinizi yazin..." rows="1"></textarea>
-                        <button id="sendButton" type="submit" aria-label="Mesaji gonder">
-                            <span class="material-symbols-outlined">send</span>
-                            Gonder
-                        </button>
-                    </form>
-                </section>
-
-                <section class="insight-panel" id="retrievalPanel" aria-label="Retrieval results">
-                    <div class="panel-header">
-                        <div>
-                            <h2>Retrieval Kanitlari</h2>
-                            <p>Researcher tarafindan bulunan dokumanlar.</p>
-                        </div>
-                        <span class="timestamp" id="retrievalLabel">Bos</span>
-                    </div>
-                    <div class="retrieval-list" id="retrievalList">
-                        <div class="empty-state">
-                            <span class="material-symbols-outlined">database</span>
-                            <p>Yeni bir sorgu calistiginda kanitlar burada listelenir.</p>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="log-panel" aria-label="Event log">
-                    <div class="panel-header">
-                        <div>
-                            <h2>Olay Akisi</h2>
-                            <p>Gercek zamanli sistem geri bildirimi.</p>
-                        </div>
-                        <span class="timestamp">Stream</span>
-                    </div>
-                    <div class="event-log" id="eventLog"></div>
-                </section>
-            </main>
         </div>
-    </div>
+
+        <div class="top-actions">
+            <span class="status-pill" id="statusBadge">
+                <span class="status-dot"></span>
+                Hazır
+            </span>
+            <button class="ghost-button" id="newSessionButton" type="button">
+                <span class="material-symbols-outlined">add</span>
+                Yeni oturum
+            </button>
+        </div>
+    </header>
+
+    <main class="workspace">
+        <!-- ── Conversation ───────────────────────────────────────── -->
+        <section class="chat-panel" aria-label="Konuşma">
+            <div class="chat-messages" id="chatMessages">
+                <div class="welcome">
+                    <p class="welcome-eyebrow">Merhaba 👋</p>
+                    <h1 class="welcome-title">Bugün neyi araştıralım?</h1>
+                    <p class="welcome-lead">
+                        Bir soru yazın. Supervisor yönlendirir, Researcher kanıt toplar,
+                        Writer yanıtı kurar, Reviewer kalite kontrol yapar — her adımı
+                        sağ tarafta canlı izleyebilirsiniz.
+                    </p>
+                    <div class="suggestion-row">
+                        <button class="suggestion" type="button">Belgelerdeki ana bulguları özetle</button>
+                        <button class="suggestion" type="button">İki kaynağı karşılaştır</button>
+                        <button class="suggestion" type="button">Kısa bir kronoloji çıkar</button>
+                    </div>
+                </div>
+            </div>
+
+            <form class="composer" id="chatForm">
+                <textarea id="userInput" placeholder="Bir mesaj yazın…" rows="1"></textarea>
+                <button id="sendButton" type="submit" aria-label="Gönder">
+                    <span class="material-symbols-outlined">arrow_upward</span>
+                </button>
+            </form>
+        </section>
+
+        <!-- ── Agent rail ─────────────────────────────────────────── -->
+        <aside class="rail" aria-label="Ajan akışı">
+            <section class="rail-card flow-card">
+                <div class="rail-head">
+                    <div>
+                        <h2>Ajan akışı</h2>
+                        <p id="currentAgentLabel">Beklemede</p>
+                    </div>
+                    <div class="hero-meter" aria-label="İlerleme">
+                        <span class="meter-value" id="progressPercent">0%</span>
+                    </div>
+                </div>
+
+                <div class="agent-flow">
+                    <article class="agent-card" id="supervisorCard" data-agent="supervisor">
+                        <span class="agent-icon material-symbols-outlined">manage_accounts</span>
+                        <div class="agent-text">
+                            <p>Supervisor</p>
+                            <span id="supervisorStatus">Sıradaki ajanı seçer</span>
+                        </div>
+                    </article>
+                    <div class="flow-connector" aria-hidden="true"></div>
+                    <article class="agent-card" id="researcherCard" data-agent="researcher">
+                        <span class="agent-icon material-symbols-outlined">manage_search</span>
+                        <div class="agent-text">
+                            <p>Researcher</p>
+                            <span id="researcherStatus">Vektör arama yapar</span>
+                        </div>
+                    </article>
+                    <div class="flow-connector" aria-hidden="true"></div>
+                    <article class="agent-card" id="writerCard" data-agent="writer">
+                        <span class="agent-icon material-symbols-outlined">edit_note</span>
+                        <div class="agent-text">
+                            <p>Writer</p>
+                            <span id="writerStatus">Yanıtı sentezler</span>
+                        </div>
+                    </article>
+                    <div class="flow-connector" aria-hidden="true"></div>
+                    <article class="agent-card" id="reviewerCard" data-agent="reviewer">
+                        <span class="agent-icon material-symbols-outlined">fact_check</span>
+                        <div class="agent-text">
+                            <p>Reviewer</p>
+                            <span id="reviewerStatus">Kaliteyi onaylar</span>
+                        </div>
+                    </article>
+                </div>
+
+                <div class="progress-block">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressBar"></div>
+                    </div>
+                    <div class="progress-meta">
+                        <span id="progressLabel">Hazır</span>
+                        <span id="flowStateText">Idle</span>
+                    </div>
+                </div>
+
+                <div class="metric-row">
+                    <div class="metric">
+                        <strong id="activeAgentMetric">0</strong>
+                        <small>Çalışan düğüm</small>
+                    </div>
+                    <div class="metric">
+                        <strong id="documentMetric">0</strong>
+                        <small>Doküman</small>
+                    </div>
+                    <div class="metric">
+                        <strong id="elapsedMetric">0.0s</strong>
+                        <small>Süre</small>
+                    </div>
+                </div>
+            </section>
+
+            <section class="rail-card">
+                <div class="rail-head">
+                    <h2>Kanıtlar</h2>
+                    <span class="tag" id="retrievalLabel">Boş</span>
+                </div>
+                <div class="retrieval-list" id="retrievalList">
+                    <div class="empty-state">
+                        <span class="material-symbols-outlined">database</span>
+                        <p>Bir sorgu çalıştığında bulunan dokümanlar burada listelenir.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="rail-card">
+                <div class="rail-head">
+                    <h2>Olay akışı</h2>
+                    <span class="tag">Stream</span>
+                </div>
+                <div class="event-log" id="eventLog"></div>
+            </section>
+        </aside>
+    </main>
 
     <script src="script.js"></script>
 </body>

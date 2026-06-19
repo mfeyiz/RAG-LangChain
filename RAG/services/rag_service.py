@@ -120,8 +120,13 @@ def write_qdrant_index(chunks: list[Document]):
         print("No vectors created.")
         return
 
-    QDRANT_PATH.mkdir(parents=True, exist_ok=True)
-    client = QdrantClient(path=str(QDRANT_PATH))
+    qdrant_url = os.getenv("QDRANT_URL", "").strip()
+    if qdrant_url:
+        client = QdrantClient(url=qdrant_url)
+        print(f"Connecting to Qdrant server: {qdrant_url}")
+    else:
+        QDRANT_PATH.mkdir(parents=True, exist_ok=True)
+        client = QdrantClient(path=str(QDRANT_PATH))
     vector_size = len(vectors[0])
 
     if client.collection_exists(COLLECTION_NAME):

@@ -4,6 +4,7 @@ substitutions:
   _GKE_NAMESPACE: rag-yeni
   _AR_REPOSITORY: rag-artifact-registery
   _SERVICE_NAME: rag-langchain
+  _AR_HOST: europe-west3-docker.pkg.dev
 
 options:
   machineType: E2_HIGHCPU_8
@@ -12,66 +13,98 @@ options:
     - DOCKER_BUILDKIT=1
 
 steps:
-  # ── 1. Lint + Unit Tests ────────────────────────────────────────────────
-  - id: lint-and-test
-    name: python:3.11-slim
-    entrypoint: bash
+  # ── 0. Detect if only frontend files changed ─────────────────────────────
+  # If only index.html / script.js / style.css changed we skip the Docker
+  # build entirely and just update the ConfigMap + restart the pod (~1 min).
+  - id: detect-changes
+    name: alpine/git
+    entrypoint: sh
     args:
       - -c
       - |
+        CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+        echo "Changed files: $CHANGED"
+        NON_FRONTEND=$(echo "$CHANGED" | grep -vE '^(index\.html|script\.js|style\.css)$' | grep -v '^$' || true)
+        if [ -n "$CHANGED" ] && [ -z "$NON_FRONTEND" ]; then
+          echo "FRONTEND_ONLY=true" > /workspace/build_flags
+          echo ">>> Frontend-only change — Docker build will be skipped"
+        else
+          echo "FRONTEND_ONLY=false" > /workspace/build_flags
+          echo ">>> Backend change detected — full build required"
+        fi
+
+  # ── 1. Lint + Unit Tests (skipped for frontend-only changes) ────────────
+  - id: lint-and-test
+    name: python:3.11-slim
+    entrypoint: bash
+    waitFor: [detect-changes]
+    args:
+      - -c
+      - |
+        . /workspace/build_flags
+        if [ "$FRONTEND_ONLY" = "true" ]; then
+          echo "Skipping tests (frontend-only change)"
+          exit 0
+        fi
         pip install --quiet uv
         uv sync --frozen --group dev
         uv run flake8 RAG tests --max-line-length=120 --extend-ignore=E501,W503
         uv run pytest tests/ -v --tb=short
 
-  # ── 2. Pull cache image (ignore failure on first run) ───────────────────
-  - id: pull-cache
+  # ── 2. Build + Push (skipped for frontend-only changes) ─────────────────
+  - id: build-and-push
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
-    args:
-      - -c
-      - docker pull europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest || true
-
-  # ── 3. Build with layer cache ────────────────────────────────────────────
-  - id: build-image
-    name: gcr.io/cloud-builders/docker
-    waitFor:
-      - lint-and-test
-      - pull-cache
-    args:
-      - build
-      - --cache-from
-      - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
-      - -t
-      - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$SHORT_SHA
-      - -t
-      - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
-      - .
-
-  # ── 4. Push both tags ───────────────────────────────────────────────────
-  - id: push-image
-    name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - --all-tags
-      - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME
-
-  # ── 5. Deploy to GKE ────────────────────────────────────────────────────
-  - id: deploy-to-gke
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: bash
+    waitFor: [lint-and-test]
     args:
       - -c
       - |
-        apt-get install -y kubectl google-cloud-sdk-gke-gcloud-auth-plugin
+        . /workspace/build_flags
+        if [ "$FRONTEND_ONLY" = "true" ]; then
+          echo "Skipping Docker build (frontend-only change)"
+          exit 0
+        fi
+        IMAGE="${_AR_HOST}/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME"
+        docker pull "$IMAGE:latest" || true
+        docker build \
+          --cache-from "$IMAGE:latest" \
+          -t "$IMAGE:$SHORT_SHA" \
+          -t "$IMAGE:latest" \
+          .
+        docker push --all-tags "$IMAGE"
+
+  # ── 3. Deploy to GKE ────────────────────────────────────────────────────
+  - id: deploy-to-gke
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    waitFor: [build-and-push]
+    args:
+      - -c
+      - |
+        apt-get install -y -q kubectl google-cloud-sdk-gke-gcloud-auth-plugin
         export USE_GKE_GCLOUD_AUTH_PLUGIN=True
         gcloud container clusters get-credentials "$_GKE_CLUSTER" \
           --region "$_REGION" \
           --project "$PROJECT_ID"
-        sed -i "s#europe-west3-docker.pkg.dev/PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest#europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$SHORT_SHA#g" k8s/deployment.yaml
-        kubectl apply -k k8s
-        kubectl rollout status deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE" --timeout=300s
 
-images:
-  - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:$SHORT_SHA
-  - europe-west3-docker.pkg.dev/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest
+        IMAGE="${_AR_HOST}/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME"
+
+        # Always sync the frontend ConfigMap from source files
+        kubectl create configmap frontend-static \
+          --from-file=index.html=index.html \
+          --from-file=script.js=script.js \
+          --from-file=style.css=style.css \
+          -n "$_GKE_NAMESPACE" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        . /workspace/build_flags
+        if [ "$FRONTEND_ONLY" = "true" ]; then
+          # Only restart pods to mount the updated ConfigMap
+          kubectl rollout restart deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE"
+          kubectl rollout status deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE" --timeout=120s
+        else
+          # Full deploy: update image tag and apply all k8s manifests
+          sed -i "s#europe-west3-docker.pkg.dev/PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest#$IMAGE:$SHORT_SHA#g" k8s/deployment.yaml
+          kubectl apply -k k8s
+          kubectl rollout status deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE" --timeout=300s
+        fi
