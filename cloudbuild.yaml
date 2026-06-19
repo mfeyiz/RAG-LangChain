@@ -22,10 +22,10 @@ steps:
     args:
       - -c
       - |
-        CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-        echo "Changed files: $CHANGED"
-        NON_FRONTEND=$(echo "$CHANGED" | grep -vE '^(index\.html|script\.js|style\.css)$' | grep -v '^$' || true)
-        if [ -n "$CHANGED" ] && [ -z "$NON_FRONTEND" ]; then
+        CHANGED=$$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+        echo "Changed files: $$CHANGED"
+        NON_FRONTEND=$$(echo "$$CHANGED" | grep -vE '^(index\.html|script\.js|style\.css)$$' | grep -v '^$$' || true)
+        if [ -n "$$CHANGED" ] && [ -z "$$NON_FRONTEND" ]; then
           echo "FRONTEND_ONLY=true" > /workspace/build_flags
           echo ">>> Frontend-only change — Docker build will be skipped"
         else
@@ -42,7 +42,7 @@ steps:
       - -c
       - |
         . /workspace/build_flags
-        if [ "$FRONTEND_ONLY" = "true" ]; then
+        if [ "$$FRONTEND_ONLY" = "true" ]; then
           echo "Skipping tests (frontend-only change)"
           exit 0
         fi
@@ -60,18 +60,18 @@ steps:
       - -c
       - |
         . /workspace/build_flags
-        if [ "$FRONTEND_ONLY" = "true" ]; then
+        if [ "$$FRONTEND_ONLY" = "true" ]; then
           echo "Skipping Docker build (frontend-only change)"
           exit 0
         fi
         IMAGE="${_AR_HOST}/$PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME"
-        docker pull "$IMAGE:latest" || true
+        docker pull "$$IMAGE:latest" || true
         docker build \
-          --cache-from "$IMAGE:latest" \
-          -t "$IMAGE:$SHORT_SHA" \
-          -t "$IMAGE:latest" \
+          --cache-from "$$IMAGE:latest" \
+          -t "$$IMAGE:$SHORT_SHA" \
+          -t "$$IMAGE:latest" \
           .
-        docker push --all-tags "$IMAGE"
+        docker push --all-tags "$$IMAGE"
 
   # ── 3. Deploy to GKE ────────────────────────────────────────────────────
   - id: deploy-to-gke
@@ -98,13 +98,13 @@ steps:
           --dry-run=client -o yaml | kubectl apply -f -
 
         . /workspace/build_flags
-        if [ "$FRONTEND_ONLY" = "true" ]; then
+        if [ "$$FRONTEND_ONLY" = "true" ]; then
           # Only restart pods to mount the updated ConfigMap
           kubectl rollout restart deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE"
           kubectl rollout status deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE" --timeout=120s
         else
           # Full deploy: update image tag and apply all k8s manifests
-          sed -i "s#europe-west3-docker.pkg.dev/PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest#$IMAGE:$SHORT_SHA#g" k8s/deployment.yaml
+          sed -i "s#europe-west3-docker.pkg.dev/PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest#$$IMAGE:$SHORT_SHA#g" k8s/deployment.yaml
           kubectl apply -k k8s
           kubectl rollout status deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE" --timeout=300s
         fi
