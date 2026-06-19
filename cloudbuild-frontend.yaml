@@ -1,0 +1,33 @@
+substitutions:
+  _REGION: europe-west4
+  _GKE_CLUSTER: deployment-1-cluster
+  _GKE_NAMESPACE: rag-yeni
+  _FRONTEND_DEPLOYMENT: rag-langchain-frontend
+
+options:
+  machineType: E2_STANDARD_2
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # ── 1. Update frontend ConfigMap ─────────────────────────────────────────
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        apt-get install -y -q kubectl google-cloud-sdk-gke-gcloud-auth-plugin
+        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+        gcloud container clusters get-credentials "$_GKE_CLUSTER" \
+          --region "$_REGION" \
+          --project "$PROJECT_ID"
+
+        kubectl create configmap frontend-static \
+          --from-file=index.html=index.html \
+          --from-file=script.js=script.js \
+          --from-file=style.css=style.css \
+          -n "$_GKE_NAMESPACE" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl rollout restart deployment/$_FRONTEND_DEPLOYMENT -n "$_GKE_NAMESPACE"
+        kubectl rollout status deployment/$_FRONTEND_DEPLOYMENT -n "$_GKE_NAMESPACE" --timeout=120s

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-langchain-frontend
+  namespace: rag-yeni
+  labels:
+    app: rag-langchain-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-langchain-frontend
+  template:
+    metadata:
+      labels:
+        app: rag-langchain-frontend
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 64Mi
+            limits:
+              cpu: "200m"
+              memory: 128Mi
+          volumeMounts:
+            - name: frontend-static
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+            - name: frontend-static
+              mountPath: /usr/share/nginx/html/script.js
+              subPath: script.js
+              readOnly: true
+            - name: frontend-static
+              mountPath: /usr/share/nginx/html/style.css
+              subPath: style.css
+              readOnly: true
+      volumes:
+        - name: frontend-static
+          configMap:
+            name: frontend-static

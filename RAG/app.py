@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from RAG.agents.graph import create_graph
@@ -18,8 +18,6 @@ from RAG.services.guardrails import guardrails
 from RAG.services.retrieval import models_ready, warmup_models
 from RAG.services.session_store import session_store
 from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
-
-STATIC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @asynccontextmanager
@@ -53,19 +51,6 @@ async def healthz():
     if not models_ready():
         return JSONResponse({"status": "loading"}, status_code=503)
     return {"status": "ok"}
-
-
-@app.get("/")
-async def index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-
-
-@app.get("/{path:path}")
-async def serve_static(path: str):
-    file_path = os.path.join(STATIC_DIR, path)
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
-    return JSONResponse({"error": "Not found"}, status_code=404)
 
 
 @app.post("/ask")

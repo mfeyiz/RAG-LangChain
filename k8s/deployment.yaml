@@ -48,6 +48,8 @@ spec:
               value: /cache/sentence-transformers
             - name: REDIS_URL
               value: redis://redis:6379
+            - name: QDRANT_URL
+              value: http://qdrant:6333
           readinessProbe:
             httpGet:
               path: /healthz
@@ -73,27 +75,7 @@ spec:
           volumeMounts:
             - name: model-cache
               mountPath: /cache
-            - name: qdrant-data
-              mountPath: /app/RAG/vector_db/qdrant
-            - name: frontend-static
-              mountPath: /app/index.html
-              subPath: index.html
-              readOnly: true
-            - name: frontend-static
-              mountPath: /app/script.js
-              subPath: script.js
-              readOnly: true
-            - name: frontend-static
-              mountPath: /app/style.css
-              subPath: style.css
-              readOnly: true
       volumes:
         - name: model-cache
           persistentVolumeClaim:
             claimName: model-cache-pvc
-        - name: qdrant-data
-          persistentVolumeClaim:
-            claimName: qdrant-pvc
-        - name: frontend-static
-          configMap:
-            name: frontend-static

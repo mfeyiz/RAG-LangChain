@@ -12,10 +12,24 @@ spec:
     - host: chat.mammas.studio
       http:
         paths:
-          - path: /
+          - path: /ask
             pathType: Prefix
             backend:
               service:
                 name: rag-langchain
+                port:
+                  number: 80
+          - path: /healthz
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain-frontend
                 port:
                   number: 80
