@@ -11,12 +11,11 @@ options:
 steps:
   # ── 1. Update frontend ConfigMap ─────────────────────────────────────────
   - id: deploy-frontend
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
     entrypoint: bash
     args:
       - -c
       - |
-        gcloud components install gke-gcloud-auth-plugin --quiet
         export USE_GKE_GCLOUD_AUTH_PLUGIN=True
         gcloud container clusters get-credentials "$_GKE_CLUSTER" \
           --region "$_REGION" \
