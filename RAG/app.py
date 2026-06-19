@@ -23,8 +23,8 @@ from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Index before warmup so the retriever finds Qdrant populated on first init.
-    await asyncio.to_thread(ensure_index)
+    # Index in background so startup isn't blocked — _dense_search retries Qdrant inline.
+    asyncio.create_task(asyncio.to_thread(ensure_index))
     await asyncio.to_thread(warmup_models)
     _app.state.graph, _app.state.checkpointer = await create_graph()
     yield
