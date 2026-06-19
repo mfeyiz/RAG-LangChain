@@ -73,8 +73,20 @@ async def retrieve_context_async(query: str, top_k: int = FINAL_CONTEXT_K) -> tu
     return await asyncio.to_thread(retrieve_context, query, top_k)
 
 
+# Module-level embeddings singleton — loaded once at startup, never tied to a retriever instance.
+_embeddings_model = None
+
+
+def _get_embeddings():
+    global _embeddings_model
+    if _embeddings_model is None:
+        _embeddings_model = create_embeddings()
+    return _embeddings_model
+
+
 def get_retriever():
-    if not hasattr(get_retriever, "_instance") or not get_retriever._instance.qdrant:
+    # Never recreate the instance: if qdrant was None at startup, _dense_search retries inline.
+    if not hasattr(get_retriever, "_instance"):
         get_retriever._instance = HybridRetriever()
     return get_retriever._instance
 
@@ -85,10 +97,9 @@ _models_ready = False
 def warmup_models() -> None:
     """Eagerly load embedding and reranker models at startup to avoid OOM spikes on first query."""
     global _models_ready
-    retriever = get_retriever()
-    if retriever.embeddings is None:
-        retriever.embeddings = create_embeddings()
+    _get_embeddings()   # load once; result is cached in _embeddings_model
     _load_reranker()
+    get_retriever()     # init corpus + BM25 + attempt Qdrant connection
     _models_ready = True
 
 
@@ -101,7 +112,7 @@ class HybridRetriever:
         self.corpus = _load_corpus()
         self.bm25 = BM25Index(self.corpus)
         self.qdrant = _load_qdrant_client()
-        self.embeddings = None
+        # embeddings live in _embeddings_model, not here
 
     def retrieve(self, query: str, top_k: int = FINAL_CONTEXT_K) -> list[RetrievalCandidate]:
         rewritten_query = query.strip()
@@ -123,16 +134,19 @@ class HybridRetriever:
         return selected
 
     def _dense_search(self, query: str) -> list[RetrievalCandidate]:
+        # Retry Qdrant connection on every call if previously unavailable.
         if self.qdrant is None:
+            self.qdrant = _load_qdrant_client()
+        if self.qdrant is None:
+            print("[Retrieval] Dense search skipped: Qdrant unavailable")
             return []
 
         try:
-            if self.embeddings is None:
-                self.embeddings = create_embeddings()
-            query_vector = self.embeddings.embed_query(query)
+            query_vector = _get_embeddings().embed_query(query)
             points = _qdrant_query(self.qdrant, query_vector)
         except Exception as exc:
             print(f"[Retrieval] Dense search skipped: {exc}")
+            self.qdrant = None  # force reconnect next time
             return []
 
         candidates = []
@@ -142,12 +156,13 @@ class HybridRetriever:
             metadata = payload.get("metadata", {})
             if not content:
                 continue
+            score = getattr(point, "score", None)
             candidates.append(
                 RetrievalCandidate(
                     doc_id=str(payload.get("doc_id") or getattr(point, "id", "")),
                     content=content,
                     metadata=metadata,
-                    dense_score=float(getattr(point, "score", 0.0) or 0.0),
+                    dense_score=float(score) if score is not None else 0.0,
                 )
             )
         return candidates
