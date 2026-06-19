@@ -13,7 +13,7 @@ options:
     - DOCKER_BUILDKIT=1
 
 steps:
-  # ── 1. Lint + Unit Tests ─────────────────────────────────────────────────
+  # ── 1a. Lint + Unit Tests ─────────────────────────────────────────────────
   - id: lint-and-test
     name: python:3.11-slim
     entrypoint: bash
@@ -25,11 +25,11 @@ steps:
         uv run flake8 RAG tests --max-line-length=120 --extend-ignore=E501,W503
         uv run pytest tests/ -v --tb=short
 
-  # ── 2. Build + Push ──────────────────────────────────────────────────────
+  # ── 1b. Build + Push (parallel with lint) ────────────────────────────────
   - id: build-and-push
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
-    waitFor: [lint-and-test]
+    waitFor: ['-']
     args:
       - -c
       - |
@@ -37,20 +37,21 @@ steps:
         docker pull "$$IMAGE:latest" || true
         docker build \
           --cache-from "$$IMAGE:latest" \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
           -t "$$IMAGE:$SHORT_SHA" \
           -t "$$IMAGE:latest" \
           .
         docker push --all-tags "$$IMAGE"
 
-  # ── 3. Deploy Backend to GKE ─────────────────────────────────────────────
+  # ── 2. Deploy Backend to GKE (waits for both lint AND build) ─────────────
   - id: deploy-to-gke
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
-    waitFor: [build-and-push]
+    waitFor: [lint-and-test, build-and-push]
     args:
       - -c
       - |
-        apt-get install -y -q kubectl google-cloud-sdk-gke-gcloud-auth-plugin
+        gcloud components install gke-gcloud-auth-plugin --quiet
         export USE_GKE_GCLOUD_AUTH_PLUGIN=True
         gcloud container clusters get-credentials "$_GKE_CLUSTER" \
           --region "$_REGION" \

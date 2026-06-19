@@ -26,6 +26,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "ragas>=0.3.0",
     "requests>=2.32.5",
+    "torch>=2.0.0",
     "sentence-transformers>=5.2.2",
     "sse-starlette>=2.0.0",
     "datasets>=3.0.0",
@@ -38,3 +39,14 @@ dev = [
     "flake8>=7.3.0",
     "pytest>=9.0.2",
 ]
+
+[tool.uv]
+torch-backend = "cpu"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
