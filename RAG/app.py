@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from RAG.agents.graph import create_graph
 from RAG.services.auth import authenticate_request
 from RAG.services.guardrails import guardrails
+from RAG.services.rag_service import ensure_index
 from RAG.services.retrieval import models_ready, warmup_models
 from RAG.services.session_store import session_store
 from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
@@ -22,6 +23,8 @@ from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Index before warmup so the retriever finds Qdrant populated on first init.
+    await asyncio.to_thread(ensure_index)
     await asyncio.to_thread(warmup_models)
     _app.state.graph, _app.state.checkpointer = await create_graph()
     yield

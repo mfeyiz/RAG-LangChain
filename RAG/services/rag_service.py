@@ -18,6 +18,32 @@ from RAG.services.retrieval import COLLECTION_NAME, CORPUS_PATH, QDRANT_PATH
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
+def ensure_index() -> None:
+    """Build the vector index only if the Qdrant collection is missing or empty."""
+    try:
+        from qdrant_client import QdrantClient
+
+        qdrant_url = os.getenv("QDRANT_URL", "").strip()
+        if qdrant_url:
+            client = QdrantClient(url=qdrant_url)
+        elif QDRANT_PATH.exists():
+            client = QdrantClient(path=str(QDRANT_PATH))
+        else:
+            client = None
+
+        if client and client.collection_exists(COLLECTION_NAME):
+            count = client.get_collection(COLLECTION_NAME).points_count
+            if count and count > 0:
+                print(f"[Index] Collection already has {count} points — skipping.")
+                return
+    except Exception as exc:
+        print(f"[Index] Could not check collection: {exc}")
+
+    print("[Index] Collection missing or empty — building vector index…")
+    create_vector_db()
+    print("[Index] Indexing complete.")
+
+
 def create_vector_db():
     documents = load_documents(DATA_DIR)
     chunks = semantic_chunk_documents(documents)
