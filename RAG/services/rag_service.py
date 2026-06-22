@@ -44,8 +44,25 @@ def _collection_ready(client) -> bool:
     return False
 
 
+def _stored_vector_dim(client) -> int | None:
+    """Return the vector dimension stored in the Qdrant collection, or None if unknown."""
+    try:
+        info = client.get_collection(COLLECTION_NAME)
+        vc = info.config.params.vectors
+        if hasattr(vc, "size"):          # unnamed default vector
+            return vc.size
+        if isinstance(vc, dict) and vc:  # named vectors
+            return next(iter(vc.values())).size
+    except Exception:
+        pass
+    return None
+
+
 def ensure_index() -> None:
-    """Build the vector index only if the Qdrant collection is missing or empty.
+    """Build the vector index only if the Qdrant collection is missing, empty, or stale.
+
+    Detects stale indexes (e.g. indexed with a degraded/wrong model) by comparing
+    the stored vector dimension against the current embedding model output.
 
     Uses a Redis distributed lock so only one pod runs indexing when multiple
     replicas start simultaneously. The lock is released whether indexing
@@ -57,11 +74,27 @@ def ensure_index() -> None:
         print(f"[Index] Could not connect to Qdrant: {exc}")
         client = None
 
-    # Fast path — already indexed, skip lock entirely.
+    # Fast path — already indexed. Validate vector dim before skipping.
     if _collection_ready(client):
-        count = client.get_collection(COLLECTION_NAME).points_count
-        print(f"[Index] Collection already has {count} points — skipping.")
-        return
+        stored_dim = _stored_vector_dim(client)
+        if stored_dim is not None:
+            expected_dim = len(create_embeddings().embed_query("probe"))
+            if stored_dim != expected_dim:
+                print(f"[Index] Vector dim mismatch (stored={stored_dim}, expected={expected_dim}) — rebuilding.")
+                try:
+                    client.delete_collection(COLLECTION_NAME)
+                except Exception as exc:
+                    print(f"[Index] Could not delete stale collection: {exc}")
+                    return
+                # Fall through to lock + rebuild.
+            else:
+                count = client.get_collection(COLLECTION_NAME).points_count
+                print(f"[Index] Collection already has {count} points — skipping.")
+                return
+        else:
+            count = client.get_collection(COLLECTION_NAME).points_count
+            print(f"[Index] Collection already has {count} points — skipping.")
+            return
 
     import redis as redis_lib
 
