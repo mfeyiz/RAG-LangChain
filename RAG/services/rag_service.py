@@ -129,16 +129,24 @@ def ensure_index() -> None:
         print("[Index] Collection missing or empty — building vector index…")
         create_vector_db()
         print("[Index] Indexing complete.")
+    except Exception as exc:
+        import traceback
+        print(f"[Index] Indexing failed: {exc}")
+        traceback.print_exc()
     finally:
         if r:
             r.delete(_LOCK_KEY)
 
 
 def create_vector_db():
+    # Reuse the already-loaded embedding model from retrieval — avoids loading
+    # a second bge-m3 instance (~3 GB) alongside the one warmup_models loaded.
+    from RAG.services.retrieval import _get_embeddings
+    embeddings = _get_embeddings()
     documents = load_documents(DATA_DIR)
     chunks = semantic_chunk_documents(documents)
     write_corpus(chunks)
-    write_qdrant_index(chunks)
+    write_qdrant_index(chunks, embeddings=embeddings)
     print(f"Indexed {len(chunks)} chunks.")
 
 
@@ -223,7 +231,7 @@ def write_corpus(chunks: list[Document]):
     print(f"Corpus written: {CORPUS_PATH}")
 
 
-def write_qdrant_index(chunks: list[Document]):
+def write_qdrant_index(chunks: list[Document], embeddings=None):
     try:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, PointStruct, VectorParams
@@ -231,9 +239,13 @@ def write_qdrant_index(chunks: list[Document]):
         print(f"Qdrant dependency unavailable; corpus-only index created. {exc}")
         return
 
-    embeddings = create_embeddings()
+    if embeddings is None:
+        embeddings = create_embeddings()
+
     texts = [chunk.page_content for chunk in chunks]
+    print(f"[Index] Embedding {len(texts)} chunks with {embeddings.model_name}…")
     vectors = embeddings.embed_documents(texts)
+    print(f"[Index] Embedding complete — {len(vectors)} vectors generated.")
     if not vectors:
         print("No vectors created.")
         return
