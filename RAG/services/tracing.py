@@ -120,11 +120,12 @@ def _send_to_langfuse(record: dict) -> bool:
 
     try:
         client = get_langfuse_client()
-        client.event(
-            trace_id=record["trace_id"],
+        with client.start_as_current_observation(
+            as_type="event",
             name=record["event"],
-            metadata=record["payload"],
-        )
+            input=record["payload"],
+        ):
+            pass
         return True
     except Exception as exc:
         print(f"[Tracing] Langfuse unavailable, writing local trace: {exc}")
