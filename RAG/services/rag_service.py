@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
@@ -18,30 +19,86 @@ from RAG.services.retrieval import COLLECTION_NAME, CORPUS_PATH, QDRANT_PATH
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
-def ensure_index() -> None:
-    """Build the vector index only if the Qdrant collection is missing or empty."""
+_LOCK_KEY = "rag:index:lock"
+_LOCK_TTL = 900  # 15 min — upper bound for full indexing run
+
+
+def _qdrant_client():
+    from qdrant_client import QdrantClient
+
+    qdrant_url = os.getenv("QDRANT_URL", "").strip()
+    if qdrant_url:
+        return QdrantClient(url=qdrant_url)
+    if QDRANT_PATH.exists():
+        return QdrantClient(path=str(QDRANT_PATH))
+    return None
+
+
+def _collection_ready(client) -> bool:
     try:
-        from qdrant_client import QdrantClient
-
-        qdrant_url = os.getenv("QDRANT_URL", "").strip()
-        if qdrant_url:
-            client = QdrantClient(url=qdrant_url)
-        elif QDRANT_PATH.exists():
-            client = QdrantClient(path=str(QDRANT_PATH))
-        else:
-            client = None
-
         if client and client.collection_exists(COLLECTION_NAME):
             count = client.get_collection(COLLECTION_NAME).points_count
-            if count and count > 0:
-                print(f"[Index] Collection already has {count} points — skipping.")
-                return
-    except Exception as exc:
-        print(f"[Index] Could not check collection: {exc}")
+            return bool(count and count > 0)
+    except Exception:
+        pass
+    return False
 
-    print("[Index] Collection missing or empty — building vector index…")
-    create_vector_db()
-    print("[Index] Indexing complete.")
+
+def ensure_index() -> None:
+    """Build the vector index only if the Qdrant collection is missing or empty.
+
+    Uses a Redis distributed lock so only one pod runs indexing when multiple
+    replicas start simultaneously. The lock is released whether indexing
+    succeeds or fails so other pods are never blocked permanently.
+    """
+    try:
+        client = _qdrant_client()
+    except Exception as exc:
+        print(f"[Index] Could not connect to Qdrant: {exc}")
+        client = None
+
+    # Fast path — already indexed, skip lock entirely.
+    if _collection_ready(client):
+        count = client.get_collection(COLLECTION_NAME).points_count
+        print(f"[Index] Collection already has {count} points — skipping.")
+        return
+
+    import redis as redis_lib
+
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
+    r = None
+    acquired = False
+    try:
+        r = redis_lib.from_url(redis_url)
+        acquired = bool(r.set(_LOCK_KEY, "1", nx=True, ex=_LOCK_TTL))
+    except Exception as exc:
+        print(f"[Index] Redis unavailable, proceeding without lock: {exc}")
+        acquired = True
+
+    if not acquired:
+        # Another pod holds the lock — wait for it to finish.
+        print("[Index] Another pod is indexing, waiting…")
+        for _ in range(180):
+            time.sleep(5)
+            if _collection_ready(client):
+                print("[Index] Index is ready.")
+                return
+        print("[Index] Timed out waiting for index — proceeding anyway.")
+        return
+
+    try:
+        # Re-check after acquiring: another pod may have finished between our
+        # first check and acquiring the lock.
+        if _collection_ready(client):
+            print("[Index] Collection indexed by another pod — skipping.")
+            return
+
+        print("[Index] Collection missing or empty — building vector index…")
+        create_vector_db()
+        print("[Index] Indexing complete.")
+    finally:
+        if r:
+            r.delete(_LOCK_KEY)
 
 
 def create_vector_db():
@@ -115,7 +172,8 @@ def semantic_chunk_documents(documents: list[Document]) -> list[Document]:
 
 def write_corpus(chunks: list[Document]):
     CORPUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CORPUS_PATH.open("w", encoding="utf-8") as file:
+    tmp_path = CORPUS_PATH.with_suffix(".tmp")
+    with tmp_path.open("w", encoding="utf-8") as file:
         for chunk in chunks:
             file.write(
                 json.dumps(
@@ -128,6 +186,7 @@ def write_corpus(chunks: list[Document]):
                 )
                 + "\n"
             )
+    tmp_path.replace(CORPUS_PATH)  # atomic — readers see old or new, never partial
     print(f"Corpus written: {CORPUS_PATH}")
 
 
