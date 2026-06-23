@@ -22,6 +22,8 @@ const uploadModalClose  = document.getElementById("uploadModalClose");
 const uploadArea        = document.getElementById("uploadArea");
 const fileInput         = document.getElementById("fileInput");
 const uploadStatus      = document.getElementById("uploadStatus");
+const docList           = document.getElementById("docList");
+const docCountTag       = document.getElementById("docCountTag");
 const suggestionsDropdown = document.getElementById("suggestionsDropdown");
 const statusBanner      = document.getElementById("statusBanner");
 const statusBannerText  = document.getElementById("statusBannerText");
@@ -35,6 +37,7 @@ const SUGGESTIONS_URL  = "/suggestions";
 const FEEDBACK_URL     = "/feedback";
 const UPLOAD_URL       = "/upload";
 const STATUS_URL       = "/status";
+const ADMIN_DOCS_URL   = "/admin/documents";
 
 const AGENT_ORDER    = ["supervisor", "researcher", "writer", "reviewer"];
 const AGENT_PROGRESS = { supervisor: 18, researcher: 45, writer: 74, reviewer: 92 };
@@ -397,7 +400,7 @@ document.addEventListener("click", (e) => {
 /* ══════════════════════════════════════════════════════════════
    DOCUMENT UPLOAD
 ═══════════════════════════════════════════════════════════════ */
-uploadButton.addEventListener("click", () => { uploadModal.hidden = false; clearUploadStatus(); });
+uploadButton.addEventListener("click", () => { uploadModal.hidden = false; clearUploadStatus(); loadDocumentList(); });
 uploadModalClose.addEventListener("click", () => { uploadModal.hidden = true; clearUploadStatus(); });
 uploadModal.addEventListener("click", (e) => { if (e.target === uploadModal) { uploadModal.hidden = true; clearUploadStatus(); } });
 
@@ -444,6 +447,7 @@ async function uploadFile(file) {
             "success",
         );
         logEvent("upload", `${data.filename} → ${data.chunks_added} chunk eklendi.`);
+        loadDocumentList();
     } catch (err) {
         showUploadStatus(`Yükleme başarısız: ${err.message}`, "error");
     }
@@ -458,6 +462,86 @@ function showUploadStatus(msg, type) {
 function clearUploadStatus() {
     uploadStatus.hidden = true;
     uploadStatus.textContent = "";
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DOCUMENT LIST (admin: list + delete)
+═══════════════════════════════════════════════════════════════ */
+async function loadDocumentList() {
+    docCountTag.textContent = "Yükleniyor…";
+    docList.innerHTML = "";
+
+    try {
+        const res  = await fetch(ADMIN_DOCS_URL);
+        const data = await res.json();
+        const docs = data.documents || [];
+
+        docCountTag.textContent = `${docs.length} kaynak`;
+
+        if (!docs.length) {
+            docList.innerHTML = `
+                <div class="doc-list-empty">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <p>Henüz belge yok.</p>
+                </div>`;
+            return;
+        }
+
+        docs.forEach((doc) => {
+            const row = document.createElement("div");
+            row.className = "doc-row";
+            row.dataset.source = doc.source;
+
+            const info = document.createElement("div");
+            info.className = "doc-row-info";
+            info.innerHTML = `
+                <span class="doc-row-name">${escapeHtml(doc.source.split("/").pop())}</span>
+                <span class="doc-row-meta">${doc.chunks} chunk · <small>${escapeHtml(doc.source)}</small></span>`;
+
+            const delBtn = document.createElement("button");
+            delBtn.type = "button";
+            delBtn.className = "doc-delete-btn";
+            delBtn.title = "Sil";
+            delBtn.innerHTML = `<span class="material-symbols-outlined">delete</span>`;
+            delBtn.addEventListener("click", () => deleteDocument(doc.source, row));
+
+            row.appendChild(info);
+            row.appendChild(delBtn);
+            docList.appendChild(row);
+        });
+    } catch {
+        docCountTag.textContent = "Hata";
+        docList.innerHTML = `<div class="doc-list-empty"><p>Belgeler yüklenemedi.</p></div>`;
+    }
+}
+
+async function deleteDocument(source, rowEl) {
+    if (!confirm(`"${source.split("/").pop()}" belgesini silmek istediğinizden emin misiniz?`)) return;
+
+    rowEl.classList.add("is-deleting");
+    try {
+        const res  = await fetch(`${ADMIN_DOCS_URL}/${encodeURIComponent(source)}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || "Silme başarısız oldu.");
+            rowEl.classList.remove("is-deleting");
+            return;
+        }
+        rowEl.remove();
+        logEvent("upload", `${source.split("/").pop()} silindi (${data.chunks_deleted} chunk).`);
+        const remaining = docList.querySelectorAll(".doc-row").length;
+        docCountTag.textContent = `${remaining} kaynak`;
+        if (!remaining) {
+            docList.innerHTML = `
+                <div class="doc-list-empty">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <p>Henüz belge yok.</p>
+                </div>`;
+        }
+    } catch {
+        alert("Silme isteği başarısız oldu.");
+        rowEl.classList.remove("is-deleting");
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════

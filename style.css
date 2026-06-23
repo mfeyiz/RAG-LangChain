@@ -980,6 +980,108 @@ h1, h2 {
 .upload-status.error   { background: var(--danger-soft);  color: var(--danger); }
 .upload-status.loading { background: var(--sunken); color: var(--muted); }
 
+/* ── Document list (inside upload modal) ────────────────────── */
+.doc-list-section {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+}
+
+.doc-list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.doc-list-head h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.doc-list {
+    max-height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.doc-list-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 20px 0;
+    color: var(--faint);
+    font-size: 13px;
+}
+
+.doc-list-empty .material-symbols-outlined { font-size: 28px; }
+
+.doc-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    border: 1px solid var(--border);
+    transition: opacity .15s;
+}
+
+.doc-row.is-deleting { opacity: .4; pointer-events: none; }
+
+.doc-row-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.doc-row-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.doc-row-meta {
+    font-size: 11px;
+    color: var(--faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.doc-row-meta small { font-size: 10px; }
+
+.doc-delete-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+
+.doc-delete-btn:hover {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
+.doc-delete-btn .material-symbols-outlined { font-size: 16px; }
+
 /* ── Streaming cursor ────────────────────────────────────────── */
 .is-streaming::after {
     content: "▋";
