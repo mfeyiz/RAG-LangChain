@@ -27,6 +27,10 @@
                 <span class="status-dot"></span>
                 Hazır
             </span>
+            <button class="ghost-button" id="uploadButton" type="button">
+                <span class="material-symbols-outlined">upload_file</span>
+                Belge yükle
+            </button>
             <button class="ghost-button" id="newSessionButton" type="button">
                 <span class="material-symbols-outlined">add</span>
                 Yeni oturum
@@ -55,7 +59,10 @@
             </div>
 
             <form class="composer" id="chatForm">
-                <textarea id="userInput" placeholder="Bir mesaj yazın…" rows="1"></textarea>
+                <div class="composer-input-wrap">
+                    <textarea id="userInput" placeholder="Bir mesaj yazın…" rows="1"></textarea>
+                    <div id="suggestionsDropdown" class="suggestions-dropdown" hidden></div>
+                </div>
                 <button id="sendButton" type="submit" aria-label="Gönder">
                     <span class="material-symbols-outlined">arrow_upward</span>
                 </button>
@@ -157,6 +164,27 @@
             </section>
         </aside>
     </main>
+
+    <!-- ── Upload modal ─────────────────────────────────────────── -->
+    <div id="uploadModal" class="modal-overlay" hidden>
+        <div class="modal-box">
+            <div class="modal-header">
+                <h2>Belge Yükle</h2>
+                <button class="modal-close" id="uploadModalClose" type="button" aria-label="Kapat">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <div class="upload-area" id="uploadArea">
+                <span class="material-symbols-outlined">cloud_upload</span>
+                <p>PDF veya TXT dosyasını buraya sürükleyin<br>ya da tıklayarak seçin</p>
+                <small>Maksimum 50 MB</small>
+            </div>
+            <input type="file" id="fileInput" accept=".pdf,.txt" hidden>
+
+            <div id="uploadStatus" hidden></div>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>

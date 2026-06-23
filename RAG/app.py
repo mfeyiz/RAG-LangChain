@@ -118,6 +118,11 @@ async def handle_query(request: Request):
         }
 
         try:
+            yield {
+                "event": "session_info",
+                "data": json.dumps({"session_id": session_id, "trace_id": trace_id}, ensure_ascii=False),
+            }
+
             with start_request_trace(
                 trace_name="rag-ask",
                 trace_id=trace_id,

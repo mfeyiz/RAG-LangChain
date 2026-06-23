@@ -810,3 +810,184 @@ h1, h2 {
     .chat-messages { padding: 22px 18px 4px; }
     .message-content { max-width: 86%; }
 }
+
+/* ── Composer input wrap ──────────────────────────────────────── */
+.composer-input-wrap {
+    flex: 1;
+    position: relative;
+}
+
+#userInput {
+    width: 100%;
+}
+
+/* ── Suggestions dropdown ────────────────────────────────────── */
+.suggestions-dropdown {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: -8px;
+    right: -8px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    z-index: 30;
+    animation: rise 140ms ease;
+}
+
+.suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    font-size: 13.5px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 100ms;
+    color: var(--ink);
+}
+
+.suggestion-item:last-child { border-bottom: none; }
+.suggestion-item:hover,
+.suggestion-item.is-focused { background: var(--accent-soft); }
+
+.suggestion-item .material-symbols-outlined {
+    font-size: 15px;
+    color: var(--faint);
+    flex-shrink: 0;
+}
+
+.suggestion-item span:not(.material-symbols-outlined) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Feedback row ────────────────────────────────────────────── */
+.feedback-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 7px;
+    padding-left: 2px;
+    animation: rise 200ms ease;
+}
+
+.feedback-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 27px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--raised);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 150ms, border-color 150ms, color 150ms;
+}
+
+.feedback-btn:hover { border-color: var(--border-strong); color: var(--ink); }
+.feedback-btn.voted-up  { background: var(--success-soft); border-color: transparent; color: var(--success); }
+.feedback-btn.voted-down { background: var(--danger-soft);  border-color: transparent; color: var(--danger); }
+.feedback-btn.voted-up:hover  { background: var(--success-soft); color: var(--success); }
+.feedback-btn.voted-down:hover { background: var(--danger-soft);  color: var(--danger); }
+.feedback-btn .material-symbols-outlined { font-size: 14px; }
+
+/* ── Upload modal ────────────────────────────────────────────── */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(35, 33, 29, 0.45);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    animation: rise 180ms ease;
+}
+
+.modal-overlay[hidden] { display: none; }
+
+.modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 26px 28px 28px;
+    width: min(460px, calc(100vw - 40px));
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+
+.modal-header h2 { font-size: 17px; }
+
+.modal-close {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--raised);
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    transition: background 150ms;
+}
+
+.modal-close:hover { background: var(--sunken); }
+.modal-close .material-symbols-outlined { font-size: 18px; }
+
+.upload-area {
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 34px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms;
+    margin-bottom: 14px;
+}
+
+.upload-area:hover,
+.upload-area.drag-over {
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+}
+
+.upload-area .material-symbols-outlined {
+    font-size: 34px;
+    color: var(--accent);
+    margin-bottom: 10px;
+    display: block;
+}
+
+.upload-area p { color: var(--muted); font-size: 14px; line-height: 1.6; }
+.upload-area small { color: var(--faint); font-size: 12px; }
+
+.upload-status {
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.upload-status.success { background: var(--success-soft); color: var(--success); }
+.upload-status.error   { background: var(--danger-soft);  color: var(--danger); }
+.upload-status.loading { background: var(--sunken); color: var(--muted); }
+
+/* ── Streaming cursor ────────────────────────────────────────── */
+.is-streaming::after {
+    content: "▋";
+    color: var(--accent);
+    animation: blink 1s step-start infinite;
+    margin-left: 1px;
+}
+
+@keyframes blink {
+    50% { opacity: 0; }
+}
