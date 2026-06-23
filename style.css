@@ -991,3 +991,117 @@ h1, h2 {
 @keyframes blink {
     50% { opacity: 0; }
 }
+
+/* ── Status banner (model load / indexing) ───────────────────── */
+.status-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 1px solid var(--accent-line);
+}
+
+.status-banner-spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid var(--accent-line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Web source results ──────────────────────────────────────── */
+.retrieval-card.web-source {
+    border-left: 3px solid var(--accent);
+}
+
+.retrieval-card.web-source .retrieval-head .material-symbols-outlined {
+    font-size: 18px;
+    color: var(--accent);
+}
+
+.relevance-pill.web-pill {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.web-link {
+    display: block;
+    font-size: 12px;
+    color: var(--accent);
+    word-break: break-all;
+    margin: 4px 0 6px;
+    text-decoration: none;
+}
+
+.web-link:hover { text-decoration: underline; }
+
+/* ── Source badge on bot messages ────────────────────────────── */
+.source-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 6px 0 2px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+    width: fit-content;
+}
+
+.source-badge .material-symbols-outlined { font-size: 15px; }
+
+/* ── Feedback ────────────────────────────────────────────────── */
+.feedback-wrap { margin-top: 8px; }
+
+.feedback-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.feedback-label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+
+.feedback-comment {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    align-items: flex-start;
+}
+
+.feedback-comment textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+}
+
+.feedback-comment-submit {
+    padding: 8px 14px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.feedback-comment-submit:hover { opacity: 0.9; }
+.feedback-comment-done { font-size: 12px; color: var(--success); }

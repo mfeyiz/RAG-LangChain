@@ -14,10 +14,14 @@ from RAG.services.embeddings import create_embeddings
 
 
 COLLECTION_NAME = "rag_documents"
-DENSE_SEARCH_K = 30
-BM25_SEARCH_K = 30
+DENSE_SEARCH_K = int(os.getenv("DENSE_SEARCH_K", "15"))
+BM25_SEARCH_K = int(os.getenv("BM25_SEARCH_K", "15"))
 FINAL_CONTEXT_K = 5
-RERANKER_MODEL_NAME = "BAAI/bge-reranker-large"
+# Cap how many merged candidates get reranked. The reranker (cross-encoder on
+# CPU) is the dominant latency cost — fewer pairs = much faster retrieval.
+RERANK_INPUT_K = int(os.getenv("RERANK_INPUT_K", "12"))
+# bge-reranker-base is ~2x faster than -large on CPU with similar ranking quality.
+RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-base")
 # Candidates below this score are dropped after reranking to avoid irrelevant results.
 RERANK_SCORE_THRESHOLD = float(os.getenv("RERANK_SCORE_THRESHOLD", "0.05"))
 
@@ -129,14 +133,28 @@ class HybridRetriever:
             print(f"[Retrieval] Cache hit for query: {rewritten_query}")
             return cached
 
+        t0 = time.time()
         dense_candidates = self._dense_search(rewritten_query)
+        t1 = time.time()
         bm25_candidates = self.bm25.search(rewritten_query, k=BM25_SEARCH_K)
         merged = _merge_candidates(dense_candidates, bm25_candidates)
 
         if not merged:
             return []
 
-        reranked = rerank_candidates(rewritten_query, merged)
+        # Only rerank the most promising candidates by fused dense+bm25 score —
+        # the cross-encoder is the latency bottleneck, so fewer pairs is faster.
+        merged.sort(key=lambda c: c.dense_score + c.bm25_score, reverse=True)
+        rerank_input = merged[:RERANK_INPUT_K]
+
+        t2 = time.time()
+        reranked = rerank_candidates(rewritten_query, rerank_input)
+        t3 = time.time()
+        print(
+            f"[Retrieval] timings — dense {t1 - t0:.2f}s | "
+            f"rerank {t3 - t2:.2f}s ({len(rerank_input)} pairs) | total {t3 - t0:.2f}s"
+        )
+
         above = [c for c in reranked if c.final_score >= RERANK_SCORE_THRESHOLD]
         # Keep at least 1 result even if everything is below threshold
         selected = (above if above else reranked[:1])[:top_k]

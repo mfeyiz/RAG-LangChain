@@ -14,10 +14,11 @@ load_dotenv(dotenv_path=env_path)
 
 def get_llm():
     return ChatOpenAI(
-        model="openai/gpt-4o-mini",
+        model=os.getenv("LLM_MODEL", "deepseek/deepseek-chat-v3.1"),
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
         temperature=0,
+        streaming=True,
     )
 
 

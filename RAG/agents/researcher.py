@@ -4,14 +4,19 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from RAG.agents.multi_hop import decompose_question, extract_answer_for_next_step, build_chained_query
 from RAG.agents.state import AgentState
+import asyncio
+
 from RAG.agents.supervisor import get_llm
 from RAG.services.retrieval import FINAL_CONTEXT_K, retrieve_context_async
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
+from RAG.services.web_search import web_search, web_search_available
 
 # Set RAG_ENABLE_MULTIHOP=1 to activate multi-hop decomposition (adds ~30s per query).
 _MULTIHOP_ENABLED = os.getenv("RAG_ENABLE_MULTIHOP", "0") == "1"
 # Rewrite query only when it is long enough to benefit from reformulation.
 _REWRITE_MIN_WORDS = int(os.getenv("RAG_REWRITE_MIN_WORDS", "7"))
+# When the best RAG result scores below this, fall back to web search.
+_WEB_FALLBACK_THRESHOLD = float(os.getenv("WEB_FALLBACK_THRESHOLD", "0.35"))
 
 QUERY_REWRITE_PROMPT = """Rewrite the user's question into a concise retrieval query.
 
@@ -41,6 +46,7 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
         rewritten_query = original_query
     context, metadata = await retrieve_context_async(rewritten_query, top_k=FINAL_CONTEXT_K)
     result_count = len(metadata)
+    top_score = max((m.get("score", 0.0) for m in metadata), default=0.0)
 
     await trace_event(
         state["trace_id"],
@@ -49,19 +55,59 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
             "query": original_query,
             "rewritten_query": rewritten_query,
             "result_count": result_count,
+            "top_score": top_score,
             "results": metadata,
         },
     )
-    span.update(output={"rewritten_query": rewritten_query, "result_count": result_count})
 
     print(f"\n[Researcher] Query: {original_query}")
     print(f"[Researcher] Rewritten: {rewritten_query}")
-    print(f"[Researcher] {result_count} context chunks selected.")
+    print(f"[Researcher] {result_count} chunks selected (top score {top_score:.4f}).")
+
+    # Fall back to web search when the corpus has no confident answer.
+    if top_score < _WEB_FALLBACK_THRESHOLD and web_search_available():
+        print(f"[Researcher] Low RAG confidence — falling back to web search.")
+        web = await asyncio.to_thread(web_search, original_query)
+        if web["context"]:
+            await trace_event(
+                state["trace_id"],
+                "researcher.web_search",
+                {"query": original_query, "source_count": len(web["sources"])},
+            )
+            span.update(output={"source_type": "web", "source_count": len(web["sources"])})
+            web_metadata = [
+                {
+                    "content": s["content"][:500],
+                    "source": s["url"],
+                    "title": s["title"],
+                    "kind": "web",
+                    "origin": "web",
+                    "score": 1.0,
+                    "relevant": True,
+                }
+                for s in web["sources"]
+            ]
+            return {
+                "research_results": web["context"],
+                "search_metadata": web_metadata,
+                "rewritten_query": rewritten_query,
+                "source_type": "web",
+                "web_sources": web["sources"],
+                "hop_steps": [],
+                "hop_context": "",
+                "messages": [
+                    AIMessage(content=f"Web search completed: {len(web['sources'])} sources found.")
+                ],
+            }
+
+    span.update(output={"rewritten_query": rewritten_query, "result_count": result_count})
 
     return {
         "research_results": context,
         "search_metadata": metadata,
         "rewritten_query": rewritten_query,
+        "source_type": "rag",
+        "web_sources": [],
         "hop_steps": [],
         "hop_context": "",
         "messages": [

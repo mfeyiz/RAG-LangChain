@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from RAG.agents.graph import create_graph
 from RAG.services.auth import authenticate_request
 from RAG.services.document_manager import add_document, delete_document_by_source, list_documents
-from RAG.services.feedback import save_feedback, get_feedback_stats, list_feedback
+from RAG.services.feedback import save_feedback, get_feedback_stats, list_feedback, update_feedback_comment
 from RAG.services.guardrails import guardrails
 from RAG.services.rag_service import ensure_index
 from RAG.services.retrieval import (
@@ -82,6 +82,24 @@ async def healthz():
     return {"status": "ok"}
 
 
+@app.get("/status")
+async def status():
+    """Lightweight status for the UI: are models loaded and is the index ready?"""
+    models = models_ready()
+    if not models:
+        phase, message = "loading_models", "Modeller yükleniyor…"
+    elif not _index_ready:
+        phase, message = "indexing", "Belgeler indeksleniyor, lütfen bekleyin…"
+    else:
+        phase, message = "ready", "Hazır"
+    return {
+        "models_ready": models,
+        "index_ready": _index_ready,
+        "phase": phase,
+        "message": message,
+    }
+
+
 # ── Ask (SSE with token streaming) ───────────────────────────────────────────
 
 @app.post("/ask")
@@ -128,6 +146,8 @@ async def handle_query(request: Request):
             "conversation_history": conversation_history,
             "hop_steps": [],
             "hop_context": "",
+            "source_type": "rag",
+            "web_sources": [],
         }
 
         try:
@@ -315,6 +335,24 @@ async def post_feedback(request: Request, body: FeedbackRequest):
         user_id=auth.user_id,
     )
     return {"ok": True}
+
+
+class FeedbackCommentRequest(BaseModel):
+    session_id: str
+    trace_id: str = ""
+    comment: str
+
+
+@app.post("/feedback/comment")
+async def post_feedback_comment(request: Request, body: FeedbackCommentRequest):
+    auth = authenticate_request(request)
+    if not auth.allowed:
+        return JSONResponse({"error": auth.error}, status_code=401)
+
+    updated = await asyncio.to_thread(
+        update_feedback_comment, body.trace_id, body.session_id, body.comment
+    )
+    return {"ok": updated}
 
 
 # ── Document Upload ───────────────────────────────────────────────────────────

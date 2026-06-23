@@ -23,3 +23,5 @@ class AgentState(TypedDict):
     conversation_history: list  # [{query, response}, ...] last N turns
     hop_steps: list             # multi-hop decomposed steps
     hop_context: str            # aggregated context from all hops
+    source_type: str            # "rag" | "web" — where research_results came from
+    web_sources: list           # [{title, url, content}, ...] when source_type == "web"

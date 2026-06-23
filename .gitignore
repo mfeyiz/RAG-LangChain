@@ -49,4 +49,5 @@ env/
 
 # İşletim sistemi geçici dosyaları
 .DS_Store
-Thumbs.db
+Thumbs.dbRAG/traces/
+RAG/vector_db/qdrant/

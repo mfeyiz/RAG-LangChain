@@ -1,8 +1,14 @@
+import os
+
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
+
+# Reviewer adds a ~1s LLM round-trip — cheap, so kept on by default for quality.
+# The real latency bottleneck is retrieval (reranker), not the reviewer.
+_REVIEWER_ENABLED = os.getenv("RAG_ENABLE_REVIEWER", "1") == "1"
 
 
 WRITER_SYSTEM_PROMPT = """You are a document-grounded QA assistant. Prepare an accurate response to the user's question using the provided top-5 retrieved context.
@@ -13,6 +19,16 @@ Rules:
 - If the retrieved context does not contain enough evidence, say the documents do not contain enough information.
 - Do not add facts from general knowledge.
 - Be polite and professional in social interactions like greetings.
+- Respond in the same language as the user's query.
+- Write your response in a clear and structured way."""
+
+
+WRITER_WEB_SYSTEM_PROMPT = """You are a QA assistant answering from WEB SEARCH results because the local knowledge base did not contain the answer.
+
+Rules:
+- Base your answer only on the provided web search results.
+- Start your answer by stating that this information was found on the internet (not in the local documents).
+- Cite supporting sources with bracket numbers like [1] or [2].
 - Respond in the same language as the user's query.
 - Write your response in a clear and structured way."""
 
@@ -43,7 +59,9 @@ async def writer_node(state: AgentState) -> dict:
                 "messages": [AIMessage(content=_NO_DOCS_REPLY)],
             }
 
-        messages = [SystemMessage(content=WRITER_SYSTEM_PROMPT)]
+        is_web = state.get("source_type") == "web"
+        system_prompt = WRITER_WEB_SYSTEM_PROMPT if is_web else WRITER_SYSTEM_PROMPT
+        messages = [SystemMessage(content=system_prompt)]
 
         user_content = f"Question: {state['query']}"
 
@@ -80,7 +98,17 @@ async def writer_node(state: AgentState) -> dict:
 
         print(f"[Writer] Response prepared ({len(draft)} characters)")
 
+        # When reviewer is enabled, return only the draft so the reviewer can
+        # check it. When disabled (default), the draft is the final answer —
+        # set final_response so the supervisor finishes without an extra LLM call.
+        if _REVIEWER_ENABLED:
+            return {
+                "draft_response": draft,
+                "messages": [AIMessage(content="Response draft prepared.")],
+            }
+
         return {
             "draft_response": draft,
-            "messages": [AIMessage(content="Response draft prepared.")],
+            "final_response": draft,
+            "messages": [AIMessage(content="Response prepared.")],
         }

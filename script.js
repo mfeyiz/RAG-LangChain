@@ -23,6 +23,8 @@ const uploadArea        = document.getElementById("uploadArea");
 const fileInput         = document.getElementById("fileInput");
 const uploadStatus      = document.getElementById("uploadStatus");
 const suggestionsDropdown = document.getElementById("suggestionsDropdown");
+const statusBanner      = document.getElementById("statusBanner");
+const statusBannerText  = document.getElementById("statusBannerText");
 const heroMeter         = document.querySelector(".hero-meter");
 const agentCards        = Array.from(document.querySelectorAll(".agent-card"));
 const connectors        = Array.from(document.querySelectorAll(".flow-connector"));
@@ -32,6 +34,7 @@ const API_URL          = "/ask";
 const SUGGESTIONS_URL  = "/suggestions";
 const FEEDBACK_URL     = "/feedback";
 const UPLOAD_URL       = "/upload";
+const STATUS_URL       = "/status";
 
 const AGENT_ORDER    = ["supervisor", "researcher", "writer", "reviewer"];
 const AGENT_PROGRESS = { supervisor: 18, researcher: 45, writer: 74, reviewer: 92 };
@@ -119,7 +122,13 @@ async function sendMessage() {
             if (event.event === "search_results") {
                 const results = safeJson(event.data) || [];
                 showSearchResults(results);
-                logEvent("retrieval", `${results.length} doküman skoru alındı.`);
+                const isWeb = results.some((r) => r.origin === "web");
+                if (isWeb) {
+                    addSourceBadge(botMessageDiv, "web");
+                    logEvent("retrieval", `RAG'de bulunamadı — internetten ${results.length} kaynak getirildi.`);
+                } else {
+                    logEvent("retrieval", `${results.length} doküman skoru alındı.`);
+                }
             }
 
             /* streaming tokens from writer */
@@ -185,17 +194,22 @@ async function sendMessage() {
    FEEDBACK
 ═══════════════════════════════════════════════════════════════ */
 function addFeedbackRow(botMessageDiv, query) {
+    const wrap = document.createElement("div");
+    wrap.className = "feedback-wrap";
+
     const row = document.createElement("div");
     row.className = "feedback-row";
+
+    const label   = document.createElement("span");
+    label.className = "feedback-label";
+    label.textContent = "Bu yanıt yardımcı oldu mu?";
 
     const upBtn   = makeFeedbackBtn("thumb_up",   "İyi yanıt",  1);
     const downBtn = makeFeedbackBtn("thumb_down", "Kötü yanıt", -1);
 
-    async function vote(btn, other, rating) {
-        if (btn.classList.contains("voted-up") || btn.classList.contains("voted-down")) return;
-        btn.classList.add(rating > 0 ? "voted-up" : "voted-down");
-        other.disabled = true;
-        other.style.opacity = "0.4";
+    let submitted = false;
+
+    async function sendFeedback(rating, comment) {
         try {
             await fetch(FEEDBACK_URL, {
                 method:  "POST",
@@ -205,17 +219,84 @@ function addFeedbackRow(botMessageDiv, query) {
                     trace_id:   currentTraceId,
                     rating,
                     query,
+                    comment: comment || "",
                 }),
             });
         } catch { /* fire-and-forget */ }
     }
 
-    upBtn.addEventListener("click",   () => vote(upBtn,   downBtn,  1));
-    downBtn.addEventListener("click", () => vote(downBtn, upBtn,   -1));
+    function lockButtons(rating) {
+        upBtn.disabled = downBtn.disabled = true;
+        (rating > 0 ? upBtn : downBtn).classList.add(rating > 0 ? "voted-up" : "voted-down");
+        (rating > 0 ? downBtn : upBtn).style.opacity = "0.35";
+    }
 
+    upBtn.addEventListener("click", () => {
+        if (submitted) return;
+        submitted = true;
+        lockButtons(1);
+        label.textContent = "Teşekkürler! 👍";
+        sendFeedback(1, "");
+    });
+
+    downBtn.addEventListener("click", () => {
+        if (submitted) return;
+        submitted = true;
+        lockButtons(-1);
+        label.textContent = "Geri bildiriminiz için teşekkürler.";
+        // Capture the rating immediately, then let the user enrich it with a comment.
+        sendFeedback(-1, "");
+        showCommentBox(wrap, query, sendComment);
+    });
+
+    async function sendComment(comment) {
+        if (!comment) return;
+        try {
+            await fetch(`${FEEDBACK_URL}/comment`, {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({
+                    session_id: currentSessionId,
+                    trace_id:   currentTraceId,
+                    comment,
+                }),
+            });
+        } catch { /* fire-and-forget */ }
+    }
+
+    row.appendChild(label);
     row.appendChild(upBtn);
     row.appendChild(downBtn);
-    botMessageDiv.appendChild(row);
+    wrap.appendChild(row);
+    botMessageDiv.appendChild(wrap);
+}
+
+function showCommentBox(wrap, query, onSubmit) {
+    const box = document.createElement("div");
+    box.className = "feedback-comment";
+
+    const textarea = document.createElement("textarea");
+    textarea.placeholder = "Neyi iyileştirebiliriz? (isteğe bağlı)";
+    textarea.rows = 2;
+
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.className = "feedback-comment-submit";
+    submit.textContent = "Gönder";
+
+    let sent = false;
+    function finish() {
+        if (sent) return;
+        sent = true;
+        onSubmit(textarea.value.trim());
+        box.innerHTML = `<span class="feedback-comment-done">Yorumunuz kaydedildi.</span>`;
+    }
+
+    submit.addEventListener("click", finish);
+    box.appendChild(textarea);
+    box.appendChild(submit);
+    wrap.appendChild(box);
+    textarea.focus();
 }
 
 function makeFeedbackBtn(icon, label, rating) {
@@ -380,6 +461,40 @@ function clearUploadStatus() {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   SYSTEM STATUS (model load + indexing)
+═══════════════════════════════════════════════════════════════ */
+let systemReady = false;
+let statusPollTimer = null;
+
+async function pollStatus() {
+    try {
+        const res  = await fetch(STATUS_URL);
+        const data = await res.json();
+
+        if (data.phase === "ready") {
+            systemReady = true;
+            statusBanner.hidden = true;
+            setControlsDisabled(false);
+            setStatus("Hazır", "");
+            if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+            return;
+        }
+
+        // Still loading models or indexing — block input and show message.
+        systemReady = false;
+        statusBanner.hidden = false;
+        statusBannerText.textContent = data.message || "Sistem hazırlanıyor…";
+        setControlsDisabled(true);
+        setStatus(data.phase === "indexing" ? "İndeksleniyor" : "Yükleniyor", "running");
+    } catch {
+        // Backend not reachable yet — keep trying quietly.
+        statusBanner.hidden = false;
+        statusBannerText.textContent = "Sunucuya bağlanılıyor…";
+        setControlsDisabled(true);
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
    SSE READER
 ═══════════════════════════════════════════════════════════════ */
 async function* readSseEvents(stream) {
@@ -489,7 +604,9 @@ function resetRunState() {
 function showSearchResults(results) {
     retrievalList.innerHTML = "";
     documentMetric.textContent = String(results.length);
-    retrievalLabel.textContent = `${results.length} doküman`;
+
+    const isWeb = results.some((r) => r.origin === "web");
+    retrievalLabel.textContent = isWeb ? `🌐 ${results.length} web kaynağı` : `${results.length} doküman`;
 
     if (!results.length) {
         retrievalList.innerHTML = `
@@ -501,23 +618,47 @@ function showSearchResults(results) {
     }
 
     results.forEach((result, index) => {
-        const card       = document.createElement("article");
-        card.className   = `retrieval-card ${result.relevant ? "relevant" : "not-relevant"}`;
-        const score      = typeof result.score === "number"       ? result.score.toFixed(4)       : "n/a";
-        const denseScore = typeof result.dense_score === "number" ? result.dense_score.toFixed(3) : "0.000";
-        const bm25Score  = typeof result.bm25_score === "number"  ? result.bm25_score.toFixed(3)  : "0.000";
+        const card     = document.createElement("article");
+        const score    = typeof result.score === "number" ? result.score.toFixed(4) : "n/a";
 
-        card.innerHTML = `
-            <div class="retrieval-head">
-                <strong>${escapeHtml(result.title || `Doc ${index + 1}`)}</strong>
-                <span class="score-pill">score ${score}</span>
-                <span class="relevance-pill">dense ${denseScore}</span>
-                <span class="relevance-pill">bm25 ${bm25Score}</span>
-            </div>
-            <small>${escapeHtml(result.source || "unknown")}</small>
-            <p>${escapeHtml(result.content || "")}</p>`;
+        if (result.origin === "web") {
+            card.className = "retrieval-card web-source";
+            const url = result.source || "";
+            card.innerHTML = `
+                <div class="retrieval-head">
+                    <span class="material-symbols-outlined">public</span>
+                    <strong>${escapeHtml(result.title || `Web ${index + 1}`)}</strong>
+                    <span class="relevance-pill web-pill">internet</span>
+                </div>
+                <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="web-link">${escapeHtml(url)}</a>
+                <p>${escapeHtml(result.content || "")}</p>`;
+        } else {
+            card.className   = `retrieval-card ${result.relevant ? "relevant" : "not-relevant"}`;
+            const denseScore = typeof result.dense_score === "number" ? result.dense_score.toFixed(3) : "0.000";
+            const bm25Score  = typeof result.bm25_score === "number"  ? result.bm25_score.toFixed(3)  : "0.000";
+            card.innerHTML = `
+                <div class="retrieval-head">
+                    <strong>${escapeHtml(result.title || `Doc ${index + 1}`)}</strong>
+                    <span class="score-pill">score ${score}</span>
+                    <span class="relevance-pill">dense ${denseScore}</span>
+                    <span class="relevance-pill">bm25 ${bm25Score}</span>
+                </div>
+                <small>${escapeHtml(result.source || "unknown")}</small>
+                <p>${escapeHtml(result.content || "")}</p>`;
+        }
         retrievalList.appendChild(card);
     });
+}
+
+function addSourceBadge(botMessageDiv, origin) {
+    if (botMessageDiv.querySelector(".source-badge")) return;
+    const badge = document.createElement("div");
+    badge.className = "source-badge";
+    badge.innerHTML = origin === "web"
+        ? `<span class="material-symbols-outlined">public</span> İnternetten bulundu`
+        : `<span class="material-symbols-outlined">database</span> Belgelerden bulundu`;
+    const content = botMessageDiv.querySelector(".message-content");
+    botMessageDiv.insertBefore(badge, content.nextSibling);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -697,5 +838,9 @@ window.addEventListener("load", () => {
     bindSuggestions();
     scrollToBottom();
     updateProgress(0, "Hazır", "Idle");
-    logEvent("idle", "Sistem hazır. Yeni bir istek bekleniyor.");
+    logEvent("idle", "Sistem durumu kontrol ediliyor…");
+
+    // Gate input until models are loaded and the index is built.
+    pollStatus();
+    statusPollTimer = setInterval(pollStatus, 3000);
 });

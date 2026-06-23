@@ -61,6 +61,14 @@ spec:
               value: "1"
             - name: RAG_ENABLE_RERANKER
               value: "1"
+            - name: LLM_MODEL
+              value: "deepseek/deepseek-chat-v3.1"
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: TAVILY_API_KEY
+                  optional: true
             - name: HF_HOME
               value: /cache/huggingface
             - name: SENTENCE_TRANSFORMERS_HOME

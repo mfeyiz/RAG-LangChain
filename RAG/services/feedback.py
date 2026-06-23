@@ -28,6 +28,31 @@ def save_feedback(
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def update_feedback_comment(trace_id: str, session_id: str, comment: str) -> bool:
+    """Attach a comment to the most recent feedback record for a trace/session.
+
+    Lets the UI capture the rating immediately on click, then enrich it with a
+    comment afterwards — without creating a duplicate (double-counted) record.
+    """
+    if not FEEDBACK_PATH.exists() or not comment:
+        return False
+
+    records: list[dict] = []
+    with FEEDBACK_PATH.open(encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                records.append(json.loads(line))
+
+    for rec in reversed(records):
+        if rec.get("trace_id") == trace_id and rec.get("session_id") == session_id:
+            rec["comment"] = comment
+            with FEEDBACK_PATH.open("w", encoding="utf-8") as fh:
+                for r in records:
+                    fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            return True
+    return False
+
+
 def get_feedback_stats() -> dict:
     if not FEEDBACK_PATH.exists():
         return {"total": 0, "positive": 0, "negative": 0, "score": None}
