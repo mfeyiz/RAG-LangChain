@@ -1,3 +1,5 @@
+import os
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from RAG.agents.multi_hop import decompose_question, extract_answer_for_next_step, build_chained_query
@@ -6,6 +8,10 @@ from RAG.agents.supervisor import get_llm
 from RAG.services.retrieval import FINAL_CONTEXT_K, retrieve_context_async
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 
+# Set RAG_ENABLE_MULTIHOP=1 to activate multi-hop decomposition (adds ~30s per query).
+_MULTIHOP_ENABLED = os.getenv("RAG_ENABLE_MULTIHOP", "0") == "1"
+# Rewrite query only when it is long enough to benefit from reformulation.
+_REWRITE_MIN_WORDS = int(os.getenv("RAG_REWRITE_MIN_WORDS", "7"))
 
 QUERY_REWRITE_PROMPT = """Rewrite the user's question into a concise retrieval query.
 
@@ -20,16 +26,19 @@ async def researcher_node(state: AgentState) -> dict:
     original_query = state["query"]
 
     with traced_observation("researcher", input_payload={"query": original_query}) as span:
-        decomposed = await decompose_question(original_query)
-
-        if decomposed.get("type") == "multi_hop":
-            return await _multi_hop_retrieve(state, decomposed, span)
+        if _MULTIHOP_ENABLED:
+            decomposed = await decompose_question(original_query)
+            if decomposed.get("type") == "multi_hop":
+                return await _multi_hop_retrieve(state, decomposed, span)
 
         return await _single_hop_retrieve(state, original_query, span)
 
 
 async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> dict:
-    rewritten_query = await rewrite_query(original_query)
+    if len(original_query.split()) >= _REWRITE_MIN_WORDS:
+        rewritten_query = await rewrite_query(original_query)
+    else:
+        rewritten_query = original_query
     context, metadata = await retrieve_context_async(rewritten_query, top_k=FINAL_CONTEXT_K)
     result_count = len(metadata)
 

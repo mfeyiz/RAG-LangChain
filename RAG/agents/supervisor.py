@@ -73,36 +73,17 @@ async def supervisor_node(state: AgentState) -> dict:
             span.update(output={"next_agent": "writer"})
             return {"next_agent": "writer"}
 
-        llm = get_llm()
-
-        messages = [SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT)]
-
-        context_parts = [f"User query: {state['query']}"]
-
-        if state.get("research_results"):
-            context_parts.append(f"Research completed: {len(state['research_results'])} characters of results found.")
-
-        if state.get("draft_response"):
-            context_parts.append(f"Response drafted: {len(state['draft_response'])} characters.")
-
-        if state.get("review_feedback"):
-            context_parts.append(f"Reviewer feedback: {state['review_feedback']}")
-
-        context_parts.append(f"Revision count: {state.get('revision_count', 0)}")
-
-        messages.append(HumanMessage(content="\n".join(context_parts)))
-
-        response = await invoke_with_langfuse(llm, messages)
-        decision = response.content.strip().lower()
-
-        valid_decisions = ["researcher", "writer", "reviewer", "finish"]
-        if decision not in valid_decisions:
-            for d in valid_decisions:
-                if d in decision:
-                    decision = d
-                    break
-            else:
-                decision = "writer"
+        # Initial state: nothing set yet. Route to researcher unless it is a
+        # short social phrase that needs no document lookup.
+        _SOCIAL = frozenset([
+            "merhaba", "selam", "hello", "hi", "hey", "teşekkür", "teşekkürler",
+            "thanks", "thank", "günaydın", "iyi", "nasılsın", "görüşürüz", "bye",
+        ])
+        words = state["query"].lower().split()
+        if len(words) <= 6 and _SOCIAL.intersection(words):
+            decision = "writer"
+        else:
+            decision = "researcher"
 
         print(f"[Supervisor] Decision: {decision}")
         await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": decision})

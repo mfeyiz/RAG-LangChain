@@ -18,6 +18,8 @@ DENSE_SEARCH_K = 30
 BM25_SEARCH_K = 30
 FINAL_CONTEXT_K = 5
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-large"
+# Candidates below this score are dropped after reranking to avoid irrelevant results.
+RERANK_SCORE_THRESHOLD = float(os.getenv("RERANK_SCORE_THRESHOLD", "0.05"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 VECTOR_DIR = BASE_DIR / "vector_db"
@@ -135,7 +137,9 @@ class HybridRetriever:
             return []
 
         reranked = rerank_candidates(rewritten_query, merged)
-        selected = reranked[:top_k]
+        above = [c for c in reranked if c.final_score >= RERANK_SCORE_THRESHOLD]
+        # Keep at least 1 result even if everything is below threshold
+        selected = (above if above else reranked[:1])[:top_k]
         _cache_results(rewritten_query, top_k, selected)
         return selected
 

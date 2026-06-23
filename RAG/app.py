@@ -33,11 +33,24 @@ from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
 _START_TIME = asyncio.get_event_loop().time() if False else __import__("time").time()
 
 
+_index_ready = False
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    asyncio.create_task(asyncio.to_thread(ensure_index))
+    global _index_ready
+    # Load models first — ensures _embeddings_model is set before ensure_index
+    # touches it. Starting both concurrently caused a race condition where two
+    # threads both tried to load BGE-M3 simultaneously.
     await asyncio.to_thread(warmup_models)
     _app.state.graph, _app.state.checkpointer = await create_graph()
+
+    async def _run_index():
+        global _index_ready
+        await asyncio.to_thread(ensure_index)
+        _index_ready = True
+
+    asyncio.create_task(_run_index())
     yield
     try:
         aclose = getattr(_app.state.checkpointer, "aclose", None)
