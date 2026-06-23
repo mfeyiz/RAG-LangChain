@@ -28,7 +28,7 @@ from RAG.services.retrieval import (
     _get_embeddings,
 )
 from RAG.services.session_store import session_store
-from RAG.services.tracing import new_trace_id, start_request_trace, trace_event
+from RAG.services.tracing import get_langfuse_handler, new_trace_id, start_request_trace, trace_event
 
 _START_TIME = asyncio.get_event_loop().time() if False else __import__("time").time()
 
@@ -165,14 +165,23 @@ async def handle_query(request: Request):
                 final_response = ""
                 active_node = ""
 
+                # Attach the Langfuse handler at the graph level so it propagates
+                # to every node via the run tree — this lets astream_events still
+                # capture on_chat_model_stream token events (per-call callback
+                # overrides would detach that tap and break streaming).
+                handler = get_langfuse_handler()
+                run_config = {
+                    "configurable": {
+                        "thread_id": session_id,
+                        "user_id": auth.user_id,
+                    }
+                }
+                if handler is not None:
+                    run_config["callbacks"] = [handler]
+
                 async for event in graph.astream_events(
                     initial_state,
-                    config={
-                        "configurable": {
-                            "thread_id": session_id,
-                            "user_id": auth.user_id,
-                        }
-                    },
+                    config=run_config,
                     version="v2",
                 ):
                     event_type = event["event"]

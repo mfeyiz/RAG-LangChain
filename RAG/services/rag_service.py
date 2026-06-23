@@ -24,13 +24,19 @@ _LOCK_TTL = 900  # 15 min — upper bound for full indexing run
 
 
 def _qdrant_client():
-    from qdrant_client import QdrantClient
-
     qdrant_url = os.getenv("QDRANT_URL", "").strip()
     if qdrant_url:
+        from qdrant_client import QdrantClient
+
         return QdrantClient(url=qdrant_url)
+
+    # Local file-based Qdrant allows only one client instance (file lock). The
+    # retriever (loaded by warmup_models) already holds it, so reuse that same
+    # client instead of opening a second one and hitting "already accessed".
     if QDRANT_PATH.exists():
-        return QdrantClient(path=str(QDRANT_PATH))
+        from RAG.services.retrieval import get_retriever
+
+        return get_retriever().qdrant
     return None
 
 
@@ -78,7 +84,8 @@ def ensure_index() -> None:
     if _collection_ready(client):
         stored_dim = _stored_vector_dim(client)
         if stored_dim is not None:
-            expected_dim = len(create_embeddings().embed_query("probe"))
+            from RAG.services.retrieval import _get_embeddings
+            expected_dim = len(_get_embeddings().embed_query("probe"))
             if stored_dim != expected_dim:
                 print(f"[Index] Vector dim mismatch (stored={stored_dim}, expected={expected_dim}) — rebuilding.")
                 try:

@@ -78,11 +78,11 @@ def traced_observation(
 
 
 async def invoke_with_langfuse(llm, messages):
-    handler = get_langfuse_handler()
-    if handler is None:
-        return await llm.ainvoke(messages)
-
-    return await llm.ainvoke(messages, config={"callbacks": [handler]})
+    # The Langfuse handler is attached at the graph level (see app.py) so it
+    # propagates through the run tree to every node. We must NOT pass an explicit
+    # callbacks config here — doing so detaches this call from the parent run and
+    # prevents astream_events from capturing on_chat_model_stream token events.
+    return await llm.ainvoke(messages)
 
 
 async def trace_event(trace_id: str, name: str, payload: dict | None = None):
