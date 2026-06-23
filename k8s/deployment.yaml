@@ -62,7 +62,7 @@ spec:
             - name: RAG_ENABLE_RERANKER
               value: "1"
             - name: LLM_MODEL
-              value: "deepseek/deepseek-chat-v3.1"
+              value: "deepseek/deepseek-v4-flash"
             - name: TAVILY_API_KEY
               valueFrom:
                 secretKeyRef:
