@@ -38,7 +38,6 @@ _index_ready = False
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _index_ready
     # Load models first — ensures _embeddings_model is set before ensure_index
     # touches it. Starting both concurrently caused a race condition where two
     # threads both tried to load BGE-M3 simultaneously.
