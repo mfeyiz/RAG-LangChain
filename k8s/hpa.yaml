@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: rag-langchain
   minReplicas: 1
-  maxReplicas: 1  # model-cache-pvc is ReadWriteOnce — cannot mount on multiple nodes
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:

@@ -22,6 +22,15 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      affinity:
+        podAffinity:
+          # All replicas must land on the same node so they can share the
+          # ReadWriteOnce model-cache-pvc (RWO allows multiple pods per node).
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: rag-langchain
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: rag-langchain
           image: europe-west3-docker.pkg.dev/PROJECT_ID/rag-artifact-registery/rag-langchain:latest
