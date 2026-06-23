@@ -14,14 +14,19 @@ class AuthResult:
     allowed: bool
     user_id: str = "anonymous"
     session_id: str = ""
+    role: str = "user"
     error: str = ""
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
 
 
 def authenticate_request(request: Request) -> AuthResult:
     secret = os.getenv("JWT_SECRET", "").strip()
     if not secret:
         print("[Auth] WARNING: JWT_SECRET is not set — all requests are accepted without authentication.")
-        return AuthResult(allowed=True)
+        return AuthResult(allowed=True, role="admin")  # dev mode: full access
 
     token = _bearer_token(request)
     if not token:
@@ -33,7 +38,8 @@ def authenticate_request(request: Request) -> AuthResult:
 
     user_id = str(payload.get("sub") or payload.get("user_id") or "authenticated")
     session_id = str(payload.get("sid") or payload.get("session_id") or "")
-    return AuthResult(allowed=True, user_id=user_id, session_id=session_id)
+    role = str(payload.get("role") or "user")
+    return AuthResult(allowed=True, user_id=user_id, session_id=session_id, role=role)
 
 
 def verify_jwt(token: str, secret: str) -> dict | None:

@@ -4,6 +4,7 @@ import time
 import uuid
 
 _REDIS_RETRY_INTERVAL = 30.0
+_HISTORY_MAX_TURNS = int(os.getenv("SESSION_HISTORY_MAX_TURNS", "6"))
 
 
 class SessionStore:
@@ -24,6 +25,20 @@ class SessionStore:
         if not raw:
             return {}
         return json.loads(raw)
+
+    def build_next_state(self, previous: dict, user_id: str, query: str, response: str, trace_id: str) -> dict:
+        """Merge the new Q&A turn into the existing session state."""
+        history = list(previous.get("history", []))
+        history.append({"query": query, "response": response})
+        history = history[-_HISTORY_MAX_TURNS:]
+        return {
+            "user_id": user_id,
+            "last_query": query,
+            "last_response": response,
+            "last_trace_id": trace_id,
+            "request_count": previous.get("request_count", 0) + 1,
+            "history": history,
+        }
 
     async def save(self, session_id: str, state: dict, ttl_seconds: int = 3600):
         payload = {**state, "updated_at": time.time()}

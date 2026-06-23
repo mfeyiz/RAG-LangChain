@@ -114,6 +114,12 @@ class HybridRetriever:
         self.qdrant = _load_qdrant_client()
         # embeddings live in _embeddings_model, not here
 
+    def reload_corpus(self) -> None:
+        """Reload corpus.jsonl and rebuild BM25 index after incremental updates."""
+        self.corpus = _load_corpus()
+        self.bm25 = BM25Index(self.corpus)
+        print(f"[Retrieval] Corpus reloaded — {len(self.corpus)} chunks.")
+
     def retrieve(self, query: str, top_k: int = FINAL_CONTEXT_K) -> list[RetrievalCandidate]:
         rewritten_query = query.strip()
         cached = _get_cached_results(rewritten_query, top_k)

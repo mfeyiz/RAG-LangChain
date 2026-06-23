@@ -47,6 +47,13 @@ async def writer_node(state: AgentState) -> dict:
 
         user_content = f"Question: {state['query']}"
 
+        history = state.get("conversation_history") or []
+        if history:
+            history_text = "\n".join(
+                f"User: {turn['query']}\nAssistant: {turn['response']}" for turn in history
+            )
+            user_content = f"Conversation history (for context only):\n{history_text}\n\n{user_content}"
+
         if research and research.strip() != "No relevant documents found.":
             user_content += f"\n\nResearch Results:\n{research}"
 

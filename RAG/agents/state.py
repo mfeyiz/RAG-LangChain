@@ -20,3 +20,6 @@ class AgentState(TypedDict):
     session_id: str
     trace_id: str
     rewritten_query: str
+    conversation_history: list  # [{query, response}, ...] last N turns
+    hop_steps: list             # multi-hop decomposed steps
+    hop_context: str            # aggregated context from all hops
