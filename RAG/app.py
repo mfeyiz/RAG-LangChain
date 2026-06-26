@@ -39,18 +39,26 @@ _index_ready = False
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Load models first — ensures _embeddings_model is set before ensure_index
-    # touches it. Starting both concurrently caused a race condition where two
-    # threads both tried to load BGE-M3 simultaneously.
-    await asyncio.to_thread(warmup_models)
+    # Set up graph and checkpointer first so FastAPI is fully configured
+    # to handle incoming requests.
     _app.state.graph, _app.state.checkpointer = await create_graph()
 
-    async def _run_index():
+    async def startup_sequence():
         global _index_ready
-        await asyncio.to_thread(ensure_index)
-        _index_ready = True
+        try:
+            # 1. Warm up models in background to avoid blocking ASGI startup
+            await asyncio.to_thread(warmup_models)
+            # 2. Run indexing after models are ready to avoid model
+            # loading race condition
+            await asyncio.to_thread(ensure_index)
+            _index_ready = True
+            print("[Startup] System is fully ready.")
+        except Exception as e:
+            print(f"[Lifespan] Error in background startup sequence: {e}")
+            import traceback
+            traceback.print_exc()
 
-    asyncio.create_task(_run_index())
+    asyncio.create_task(startup_sequence())
     yield
     try:
         aclose = getattr(_app.state.checkpointer, "aclose", None)
