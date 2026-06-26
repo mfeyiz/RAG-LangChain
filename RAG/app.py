@@ -2,6 +2,7 @@ import asyncio
 import json
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,7 +31,7 @@ from RAG.services.retrieval import (
 from RAG.services.session_store import session_store
 from RAG.services.tracing import get_langfuse_handler, new_trace_id, start_request_trace, trace_event
 
-_START_TIME = asyncio.get_event_loop().time() if False else __import__("time").time()
+_START_TIME = time.time()
 
 
 _index_ready = False
@@ -402,12 +403,11 @@ async def admin_stats(request: Request):
     if err:
         return err
 
-    import time as _time
     retriever = get_retriever()
     feedback = get_feedback_stats()
 
     return {
-        "uptime_seconds": round(_time.time() - _START_TIME),
+        "uptime_seconds": round(time.time() - _START_TIME),
         "corpus_chunks": len(retriever.corpus),
         "qdrant_available": retriever.qdrant is not None,
         "models_ready": models_ready(),

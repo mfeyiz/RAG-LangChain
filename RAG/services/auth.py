@@ -24,9 +24,13 @@ class AuthResult:
 
 def authenticate_request(request: Request) -> AuthResult:
     secret = os.getenv("JWT_SECRET", "").strip()
+    allow_insecure = os.getenv("ALLOW_INSECURE_DEV", "").strip() == "1"
     if not secret:
-        print("[Auth] WARNING: JWT_SECRET is not set — all requests are accepted without authentication.")
-        return AuthResult(allowed=True, role="admin")  # dev mode: full access
+        if allow_insecure:
+            print("[Auth] WARNING: JWT_SECRET is not set and ALLOW_INSECURE_DEV=1 — all requests are accepted without authentication.")
+            return AuthResult(allowed=True, role="admin")  # dev mode: full access
+        print("[Auth] ERROR: JWT_SECRET is not set — authentication required. Set ALLOW_INSECURE_DEV=1 to disable for development.")
+        return AuthResult(allowed=False, error="Authentication not configured. Set JWT_SECRET or ALLOW_INSECURE_DEV=1 for development.")
 
     token = _bearer_token(request)
     if not token:
@@ -61,7 +65,9 @@ def verify_jwt(token: str, secret: str) -> dict | None:
 
     now = int(time.time())
     exp = payload.get("exp")
-    if exp is not None and now > int(exp):
+    if exp is None:
+        return None
+    if now > int(exp):
         return None
 
     nbf = payload.get("nbf")

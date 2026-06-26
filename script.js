@@ -708,13 +708,19 @@ function showSearchResults(results) {
         if (result.origin === "web") {
             card.className = "retrieval-card web-source";
             const url = result.source || "";
+            let linkHtml = "";
+            if (url && /^https?:\/\//i.test(url)) {
+                linkHtml = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="web-link">${escapeHtml(url)}</a>`;
+            } else {
+                linkHtml = `<span class="web-link">${escapeHtml(url || "invalid URL")}</span>`;
+            }
             card.innerHTML = `
                 <div class="retrieval-head">
                     <span class="material-symbols-outlined">public</span>
                     <strong>${escapeHtml(result.title || `Web ${index + 1}`)}</strong>
                     <span class="relevance-pill web-pill">internet</span>
                 </div>
-                <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="web-link">${escapeHtml(url)}</a>
+                ${linkHtml}
                 <p>${escapeHtml(result.content || "")}</p>`;
         } else {
             card.className   = `retrieval-card ${result.relevant ? "relevant" : "not-relevant"}`;

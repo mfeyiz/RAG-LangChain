@@ -1,7 +1,6 @@
 import os
 import re
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 # ── 1. Query length limit ────────────────────────────────────────────────────
@@ -47,8 +46,35 @@ _OFFTOPIC_PATTERNS = [
 ]
 OFFTOPIC_RE = [re.compile(p, re.IGNORECASE) for p in _OFFTOPIC_PATTERNS]
 
-# ── In-memory rate limit store ────────────────────────────────────────────────
-_rate_store: dict[str, list[float]] = defaultdict(list)
+_redis_client = None
+_redis_retry_after: float = 0.0
+_REDIS_RETRY_INTERVAL = 30.0
+
+
+def _load_redis_client():
+    global _redis_client, _redis_retry_after
+    if _redis_client is not None:
+        return _redis_client
+
+    now = time.time()
+    if now < _redis_retry_after:
+        return None
+
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if not redis_url:
+        return None
+
+    try:
+        from redis import Redis
+
+        client = Redis.from_url(redis_url, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        return client
+    except Exception as exc:
+        print(f"[Guardrails] Redis unavailable, retrying in {_REDIS_RETRY_INTERVAL}s: {exc}")
+        _redis_retry_after = now + _REDIS_RETRY_INTERVAL
+        return None
 
 
 @dataclass
@@ -71,11 +97,37 @@ class GuardrailService:
             return GuardrailResult(allowed=False, error="Query cannot be empty.", status_code=400)
         return GuardrailResult(allowed=True)
 
-    # 2. Rate limiting (sliding window, per user)
+    # 2. Rate limiting (sliding window, per user) — backed by Redis for multi-pod correctness
     def check_rate_limit(self, user_id: str) -> GuardrailResult:
-        now = time.monotonic()
+        now = time.time()
         window_start = now - RATE_LIMIT_WINDOW
-        bucket = _rate_store[user_id]
+        key = f"ratelimit:{user_id}"
+
+        client = _load_redis_client()
+        if client is not None:
+            try:
+                pipe = client.pipeline()
+                pipe.zremrangebyscore(key, 0, window_start)
+                pipe.zcard(key)
+                pipe.zadd(key, {str(now): now})
+                pipe.expire(key, RATE_LIMIT_WINDOW + 1)
+                results = pipe.execute()
+                current_count = results[1]
+                if current_count >= RATE_LIMIT_MAX:
+                    return GuardrailResult(
+                        allowed=False,
+                        error=f"Rate limit exceeded: max {RATE_LIMIT_MAX} requests per {RATE_LIMIT_WINDOW}s. Please wait.",
+                        status_code=429,
+                    )
+                return GuardrailResult(allowed=True)
+            except Exception as exc:
+                print(f"[Guardrails] Redis rate limit failed, falling back to in-memory: {exc}")
+
+        # Fallback to in-memory (single-process only)
+        if not hasattr(self, "_rate_store"):
+            from collections import defaultdict
+            self._rate_store = defaultdict(list)
+        bucket = self._rate_store[user_id]
         bucket[:] = [t for t in bucket if t > window_start]
         if len(bucket) >= RATE_LIMIT_MAX:
             return GuardrailResult(

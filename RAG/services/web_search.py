@@ -24,15 +24,18 @@ def web_search(query: str) -> dict:
         return {"context": "", "sources": [], "answer": ""}
 
     payload = {
-        "api_key": api_key,
         "query": query,
         "max_results": _MAX_RESULTS,
         "search_depth": "basic",
         "include_answer": True,
     }
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+
     try:
-        response = httpx.post(TAVILY_API_URL, json=payload, timeout=_TIMEOUT)
+        response = httpx.post(TAVILY_API_URL, json=payload, headers=headers, timeout=_TIMEOUT)
         response.raise_for_status()
         data = response.json()
     except Exception as exc:

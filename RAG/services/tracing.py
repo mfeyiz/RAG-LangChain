@@ -73,7 +73,7 @@ def traced_observation(
     if input_payload is not None:
         observation_kwargs["input"] = input_payload
 
-    with langfuse.start_as_current_observation(**observation_kwargs) as observation:
+    with langfuse.start_as_current_observation(**observation_kwargs) as observation:    
         yield observation
 
 

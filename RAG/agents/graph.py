@@ -45,10 +45,7 @@ async def create_graph():
     workflow.add_edge("writer", "supervisor")
     workflow.add_edge("reviewer", "supervisor")
 
-    redis_url = os.getenv(
-        "REDIS_URL",
-        "redis://:myredissecret@localhost:6380",
-    )
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
 
     checkpointer = AsyncRedisSaver(redis_url=redis_url)
     try:

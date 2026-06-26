@@ -38,7 +38,18 @@ async def decompose_question(query: str) -> dict:
         )
         
         import json
-        result = json.loads(response.content.strip())
+        import re
+        content = response.content.strip()
+        # Extract JSON from potential markdown code fences
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            content = match.group(0)
+        result = json.loads(content)
+        # Validate required fields
+        if result.get("type") not in ("single", "multi_hop"):
+            result = {"type": "single", "query": query}
+        elif result.get("type") == "multi_hop" and not isinstance(result.get("steps"), list):
+            result = {"type": "single", "query": query}
         return result
     except Exception as exc:
         print(f"[MultiHop] Question decomposition failed: {exc}")

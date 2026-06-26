@@ -86,12 +86,13 @@ def test_jwt_verification_with_hmac_sha256():
     import hashlib
     import hmac
     import json
+    import time
 
     from RAG.services.auth import verify_jwt
 
     secret = "test-secret"
     header = {"alg": "HS256", "typ": "JWT"}
-    payload = {"sub": "user-1", "sid": "session-1"}
+    payload = {"sub": "user-1", "sid": "session-1", "exp": int(time.time()) + 3600}
 
     def encode(data):
         raw = json.dumps(data, separators=(",", ":")).encode("utf-8")

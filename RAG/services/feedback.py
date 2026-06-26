@@ -5,6 +5,40 @@ from pathlib import Path
 
 FEEDBACK_PATH = Path(__file__).resolve().parent.parent / "traces" / "feedback.jsonl"
 
+_redis_client = None
+_redis_retry_after: float = 0.0
+_REDIS_RETRY_INTERVAL = 30.0
+
+
+def _load_redis_client():
+    global _redis_client, _redis_retry_after
+    if _redis_client is not None:
+        return _redis_client
+
+    now = time.time()
+    if now < _redis_retry_after:
+        return None
+
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if not redis_url:
+        return None
+
+    try:
+        from redis import Redis
+
+        client = Redis.from_url(redis_url, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        return client
+    except Exception as exc:
+        print(f"[Feedback] Redis unavailable, retrying in {_REDIS_RETRY_INTERVAL}s: {exc}")
+        _redis_retry_after = now + _REDIS_RETRY_INTERVAL
+        return None
+
+
+def _feedback_key(trace_id: str, session_id: str) -> str:
+    return f"feedback:{trace_id}:{session_id}"
+
 
 def save_feedback(
     session_id: str,
@@ -23,6 +57,18 @@ def save_feedback(
         "rating": rating,
         "comment": comment,
     }
+
+    client = _load_redis_client()
+    if client is not None:
+        try:
+            key = _feedback_key(trace_id, session_id)
+            client.set(key, json.dumps(record, ensure_ascii=False))
+            client.sadd("feedback:all", key)
+            return
+        except Exception as exc:
+            print(f"[Feedback] Redis save failed, falling back to file: {exc}")
+
+    # Fallback to file
     FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with FEEDBACK_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -34,7 +80,25 @@ def update_feedback_comment(trace_id: str, session_id: str, comment: str) -> boo
     Lets the UI capture the rating immediately on click, then enrich it with a
     comment afterwards — without creating a duplicate (double-counted) record.
     """
-    if not FEEDBACK_PATH.exists() or not comment:
+    if not comment:
+        return False
+
+    client = _load_redis_client()
+    if client is not None:
+        try:
+            key = _feedback_key(trace_id, session_id)
+            raw = client.get(key)
+            if raw is not None:
+                record = json.loads(raw)
+                record["comment"] = comment
+                client.set(key, json.dumps(record, ensure_ascii=False))
+                return True
+            return False
+        except Exception as exc:
+            print(f"[Feedback] Redis update failed, falling back to file: {exc}")
+
+    # Fallback to file
+    if not FEEDBACK_PATH.exists():
         return False
 
     records: list[dict] = []
@@ -54,6 +118,26 @@ def update_feedback_comment(trace_id: str, session_id: str, comment: str) -> boo
 
 
 def get_feedback_stats() -> dict:
+    client = _load_redis_client()
+    if client is not None:
+        try:
+            keys = client.smembers("feedback:all")
+            total = positive = negative = 0
+            for key in keys:
+                raw = client.get(key)
+                if raw:
+                    rec = json.loads(raw)
+                    total += 1
+                    if rec.get("rating", 0) > 0:
+                        positive += 1
+                    else:
+                        negative += 1
+            score = round(positive / total, 3) if total else None
+            return {"total": total, "positive": positive, "negative": negative, "score": score}
+        except Exception as exc:
+            print(f"[Feedback] Redis stats failed, falling back to file: {exc}")
+
+    # Fallback to file
     if not FEEDBACK_PATH.exists():
         return {"total": 0, "positive": 0, "negative": 0, "score": None}
 
@@ -74,6 +158,21 @@ def get_feedback_stats() -> dict:
 
 
 def list_feedback(limit: int = 50) -> list[dict]:
+    client = _load_redis_client()
+    if client is not None:
+        try:
+            keys = client.smembers("feedback:all")
+            records = []
+            for key in keys:
+                raw = client.get(key)
+                if raw:
+                    records.append(json.loads(raw))
+            records.sort(key=lambda r: r.get("ts", 0), reverse=True)
+            return records[:limit]
+        except Exception as exc:
+            print(f"[Feedback] Redis list failed, falling back to file: {exc}")
+
+    # Fallback to file
     if not FEEDBACK_PATH.exists():
         return []
 

@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 from RAG.services.retrieval import (
@@ -50,12 +51,14 @@ def add_document(file_bytes: bytes, filename: str) -> dict:
             raise ValueError(f"Unsupported file type: {suffix}. Only .pdf and .txt are accepted.")
 
         chunks = semantic_chunk_documents(raw_docs)
-        if not chunks:
-            return {"filename": filename, "chunks_added": 0, "doc_ids": []}
 
         # Persist a named copy (stem + timestamp) so it survives server restarts.
         final_path = UPLOADS_DIR / f"{tmp_path.stem}_{int(time.time())}{suffix}"
         shutil.move(str(tmp_path), str(final_path))
+
+        if not chunks:
+            return {"filename": filename, "chunks_added": 0, "doc_ids": []}
+
         for chunk in chunks:
             chunk.metadata["source"] = str(final_path.relative_to(final_path.parent.parent.parent / "data")).replace("\\", "/")
 
@@ -110,20 +113,19 @@ def _upsert_to_qdrant(chunks):
         from qdrant_client import QdrantClient
         from qdrant_client.models import PointStruct
 
-        qdrant_url = os.getenv("QDRANT_URL", "").strip()
-        client = QdrantClient(url=qdrant_url) if qdrant_url else QdrantClient(path=str(QDRANT_PATH))
+        retriever = get_retriever()
+        client = retriever.qdrant
 
-        if not client.collection_exists(COLLECTION_NAME):
+        if client is None or not client.collection_exists(COLLECTION_NAME):
             return
 
         embeddings = _get_embeddings()
         texts = [c.page_content for c in chunks]
         vectors = embeddings.embed_documents(texts)
 
-        existing_count = client.get_collection(COLLECTION_NAME).points_count or 0
         points = [
             PointStruct(
-                id=existing_count + i,
+                id=uuid.uuid4().hex,
                 vector=vec,
                 payload={
                     "doc_id": chunk.metadata["doc_id"],
@@ -131,7 +133,7 @@ def _upsert_to_qdrant(chunks):
                     "metadata": chunk.metadata,
                 },
             )
-            for i, (chunk, vec) in enumerate(zip(chunks, vectors))
+            for chunk, vec in zip(chunks, vectors)
         ]
         for start in range(0, len(points), 64):
             client.upsert(collection_name=COLLECTION_NAME, points=points[start: start + 64])
@@ -156,10 +158,10 @@ def _delete_from_qdrant_by_source(source: str) -> int:
         from qdrant_client import QdrantClient
         from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-        qdrant_url = os.getenv("QDRANT_URL", "").strip()
-        client = QdrantClient(url=qdrant_url) if qdrant_url else QdrantClient(path=str(QDRANT_PATH))
+        retriever = get_retriever()
+        client = retriever.qdrant
 
-        if not client.collection_exists(COLLECTION_NAME):
+        if client is None or not client.collection_exists(COLLECTION_NAME):
             return 0
 
         result = client.delete(

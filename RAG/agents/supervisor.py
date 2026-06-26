@@ -2,9 +2,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
 
-from RAG.agents.state import AgentState, AgentRole
+from RAG.agents.state import AgentState
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 
 
@@ -23,23 +22,6 @@ def get_llm():
         # from ~10s to ~3s in local benchmarks.
         extra_body={"provider": {"sort": "latency"}},
     )
-
-
-SUPERVISOR_SYSTEM_PROMPT = """You are a supervisor agent. Your task is to analyze the user's question and decide which agent should run next.
-
-Available agents:
-- researcher: Searches the document database. Use for technical questions, product information, or definitions.
-- writer: Prepares a response for the user using research results.
-- reviewer: Checks the quality of the prepared response.
-
-Decision rules:
-1. If the user asks a technical question or requests information -> "researcher"
-2. Social interactions like greetings, thanks -> "writer" (no research needed)
-3. If research is done -> "writer"
-4. If a response is drafted -> "reviewer"
-5. If reviewer approved or revision count reached 2 -> "FINISH"
-
-Return ONLY one of these values: researcher, writer, reviewer, FINISH"""
 
 
 async def supervisor_node(state: AgentState) -> dict:
