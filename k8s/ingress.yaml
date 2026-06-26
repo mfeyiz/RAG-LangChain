@@ -26,6 +26,41 @@ spec:
                 name: rag-langchain
                 port:
                   number: 80
+          - path: /status
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /suggestions
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /feedback
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /upload
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
           - path: /
             pathType: Prefix
             backend:
