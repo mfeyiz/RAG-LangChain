@@ -13,7 +13,6 @@ from typing import Iterable
 from RAG.services.embeddings import create_embeddings
 
 
-COLLECTION_NAME = "rag_documents"
 DENSE_SEARCH_K = int(os.getenv("DENSE_SEARCH_K", "15"))
 BM25_SEARCH_K = int(os.getenv("BM25_SEARCH_K", "15"))
 FINAL_CONTEXT_K = 5
@@ -28,7 +27,30 @@ RERANK_SCORE_THRESHOLD = float(os.getenv("RERANK_SCORE_THRESHOLD", "0.05"))
 BASE_DIR = Path(__file__).resolve().parent.parent
 VECTOR_DIR = BASE_DIR / "vector_db"
 QDRANT_PATH = VECTOR_DIR / "qdrant"
-CORPUS_PATH = VECTOR_DIR / "corpus.jsonl"
+
+# ── Dual-channel configuration ────────────────────────────────────────────────
+# Two isolated retrieval channels share a single Qdrant store (one directory,
+# two collections) but keep separate BM25 corpora on disk:
+#   - "originals":  read-only ground-truth index (never edited)
+#   - "workspace":  active RAG index the chat queries and the editor mutates
+CHANNELS: dict[str, dict] = {
+    "originals": {"collection": "rag_originals", "corpus": VECTOR_DIR / "corpus_originals.jsonl"},
+    "workspace": {"collection": "rag_workspace", "corpus": VECTOR_DIR / "corpus_workspace.jsonl"},
+}
+DEFAULT_CHANNEL = "workspace"
+
+
+def channel_collection(channel: str = DEFAULT_CHANNEL) -> str:
+    return CHANNELS[channel]["collection"]
+
+
+def channel_corpus_path(channel: str = DEFAULT_CHANNEL) -> Path:
+    return CHANNELS[channel]["corpus"]
+
+
+# Backward-compatible aliases — default to the workspace channel.
+COLLECTION_NAME = CHANNELS[DEFAULT_CHANNEL]["collection"]
+CORPUS_PATH = CHANNELS[DEFAULT_CHANNEL]["corpus"]
 
 
 @dataclass
@@ -69,14 +91,18 @@ class RetrievalCandidate:
         )
 
 
-def retrieve_context(query: str, top_k: int = FINAL_CONTEXT_K) -> tuple[str, list[dict]]:
-    retriever = get_retriever()
+def retrieve_context(
+    query: str, top_k: int = FINAL_CONTEXT_K, channel: str = DEFAULT_CHANNEL
+) -> tuple[str, list[dict]]:
+    retriever = get_retriever(channel)
     candidates = retriever.retrieve(query, top_k=top_k)
     return format_docs(candidates), search_metadata(candidates)
 
 
-async def retrieve_context_async(query: str, top_k: int = FINAL_CONTEXT_K) -> tuple[str, list[dict]]:
-    return await asyncio.to_thread(retrieve_context, query, top_k)
+async def retrieve_context_async(
+    query: str, top_k: int = FINAL_CONTEXT_K, channel: str = DEFAULT_CHANNEL
+) -> tuple[str, list[dict]]:
+    return await asyncio.to_thread(retrieve_context, query, top_k, channel)
 
 
 # Module-level embeddings singleton — loaded once at startup, never tied to a retriever instance.
@@ -90,11 +116,60 @@ def _get_embeddings():
     return _embeddings_model
 
 
-def get_retriever():
-    # Never recreate the instance: if qdrant was None at startup, _dense_search retries inline.
-    if not hasattr(get_retriever, "_instance"):
-        get_retriever._instance = HybridRetriever()
-    return get_retriever._instance
+# Shared Qdrant client. Local file-based Qdrant permits only ONE client per
+# directory (file lock), so every channel and the indexer must reuse this one.
+_qdrant_singleton = None
+
+
+def get_qdrant_client(create: bool = False):
+    """Return the process-wide Qdrant client, opening it on first use.
+
+    `create=True` allows creating the local store directory (used by writers);
+    readers pass `create=False` and get None until the store exists.
+    """
+    global _qdrant_singleton
+    if _qdrant_singleton is not None:
+        return _qdrant_singleton
+
+    try:
+        from qdrant_client import QdrantClient
+
+        qdrant_url = os.getenv("QDRANT_URL", "").strip()
+        if qdrant_url:
+            _qdrant_singleton = QdrantClient(url=qdrant_url)
+        else:
+            if not QDRANT_PATH.exists() and not create:
+                return None
+            QDRANT_PATH.mkdir(parents=True, exist_ok=True)
+            _qdrant_singleton = QdrantClient(path=str(QDRANT_PATH))
+    except Exception as exc:
+        print(f"[Retrieval] Qdrant unavailable: {exc}")
+        return None
+    return _qdrant_singleton
+
+
+def reset_qdrant_client() -> None:
+    """Drop the cached client so the next call reconnects (used after errors)."""
+    global _qdrant_singleton
+    _qdrant_singleton = None
+
+
+def _collection_exists(client, collection_name: str) -> bool:
+    try:
+        return bool(client) and client.collection_exists(collection_name)
+    except Exception:
+        return False
+
+
+# Per-channel retriever singletons.
+_RETRIEVERS: dict[str, "HybridRetriever"] = {}
+
+
+def get_retriever(channel: str = DEFAULT_CHANNEL):
+    # Never recreate the instance: if Qdrant was None at startup, _dense_search retries inline.
+    if channel not in _RETRIEVERS:
+        _RETRIEVERS[channel] = HybridRetriever(channel)
+    return _RETRIEVERS[channel]
 
 
 _models_ready = False
@@ -105,7 +180,9 @@ def warmup_models() -> None:
     global _models_ready
     _get_embeddings()   # load once; result is cached in _embeddings_model
     _load_reranker()
-    get_retriever()     # init corpus + BM25 + attempt Qdrant connection
+    for channel in CHANNELS:
+        get_retriever(channel)   # init corpus + BM25 per channel
+    get_qdrant_client()          # attempt shared Qdrant connection
     _models_ready = True
 
 
@@ -114,21 +191,28 @@ def models_ready() -> bool:
 
 
 class HybridRetriever:
-    def __init__(self):
-        self.corpus = _load_corpus()
+    def __init__(self, channel: str = DEFAULT_CHANNEL):
+        self.channel = channel
+        self.collection_name = channel_collection(channel)
+        self.corpus_path = channel_corpus_path(channel)
+        self.corpus = _load_corpus(self.corpus_path)
         self.bm25 = BM25Index(self.corpus)
-        self.qdrant = _load_qdrant_client()
-        # embeddings live in _embeddings_model, not here
+        # embeddings live in _embeddings_model; the Qdrant client is shared via get_qdrant_client()
+
+    @property
+    def qdrant(self):
+        """Backward-compatible accessor — returns the shared Qdrant client."""
+        return get_qdrant_client()
 
     def reload_corpus(self) -> None:
-        """Reload corpus.jsonl and rebuild BM25 index after incremental updates."""
-        self.corpus = _load_corpus()
+        """Reload this channel's corpus and rebuild BM25 index after incremental updates."""
+        self.corpus = _load_corpus(self.corpus_path)
         self.bm25 = BM25Index(self.corpus)
-        print(f"[Retrieval] Corpus reloaded — {len(self.corpus)} chunks.")
+        print(f"[Retrieval] Corpus reloaded ({self.channel}) — {len(self.corpus)} chunks.")
 
     def retrieve(self, query: str, top_k: int = FINAL_CONTEXT_K) -> list[RetrievalCandidate]:
         rewritten_query = query.strip()
-        cached = _get_cached_results(rewritten_query, top_k)
+        cached = _get_cached_results(rewritten_query, top_k, self.channel)
         if cached is not None:
             print(f"[Retrieval] Cache hit for query: {rewritten_query}")
             return cached
@@ -158,23 +242,21 @@ class HybridRetriever:
         above = [c for c in reranked if c.final_score >= RERANK_SCORE_THRESHOLD]
         # Keep at least 1 result even if everything is below threshold
         selected = (above if above else reranked[:1])[:top_k]
-        _cache_results(rewritten_query, top_k, selected)
+        _cache_results(rewritten_query, top_k, selected, self.channel)
         return selected
 
     def _dense_search(self, query: str) -> list[RetrievalCandidate]:
-        # Retry Qdrant connection on every call if previously unavailable.
-        if self.qdrant is None:
-            self.qdrant = _load_qdrant_client()
-        if self.qdrant is None:
-            print("[Retrieval] Dense search skipped: Qdrant unavailable")
+        client = get_qdrant_client()
+        if client is None or not _collection_exists(client, self.collection_name):
+            print(f"[Retrieval] Dense search skipped: Qdrant/{self.collection_name} unavailable")
             return []
 
         try:
             query_vector = _get_embeddings().embed_query(query)
-            points = _qdrant_query(self.qdrant, query_vector)
+            points = _qdrant_query(client, query_vector, self.collection_name)
         except Exception as exc:
             print(f"[Retrieval] Dense search skipped: {exc}")
-            self.qdrant = None  # force reconnect next time
+            reset_qdrant_client()  # force reconnect next time
             return []
 
         candidates = []
@@ -308,6 +390,7 @@ def search_metadata(candidates: Iterable[RetrievalCandidate], content_limit: int
             "source": candidate.metadata.get("source", "unknown"),
             "title": candidate.metadata.get("title", "untitled"),
             "kind": candidate.metadata.get("kind", "document"),
+            "images": candidate.metadata.get("images", []),
             "dense_score": candidate.dense_score,
             "bm25_score": candidate.bm25_score,
             "rerank_score": candidate.rerank_score,
@@ -331,13 +414,13 @@ def _merge_candidates(*candidate_groups: list[RetrievalCandidate]) -> list[Retri
     return list(merged.values())
 
 
-def _load_corpus() -> list[RetrievalCandidate]:
-    if not CORPUS_PATH.exists():
-        print(f"[Retrieval] Corpus not found at {CORPUS_PATH}. Run RAG/services/rag_service.py.")
+def _load_corpus(corpus_path: Path = CORPUS_PATH) -> list[RetrievalCandidate]:
+    if not corpus_path.exists():
+        print(f"[Retrieval] Corpus not found at {corpus_path}. Run RAG/services/rag_service.py.")
         return []
 
     corpus = []
-    with CORPUS_PATH.open(encoding="utf-8") as file:
+    with corpus_path.open(encoding="utf-8") as file:
         for line in file:
             if not line.strip():
                 continue
@@ -352,30 +435,10 @@ def _load_corpus() -> list[RetrievalCandidate]:
     return corpus
 
 
-def _load_qdrant_client():
-    try:
-        from qdrant_client import QdrantClient
-
-        qdrant_url = os.getenv("QDRANT_URL", "").strip()
-        if qdrant_url:
-            client = QdrantClient(url=qdrant_url)
-        else:
-            if not QDRANT_PATH.exists():
-                return None
-            client = QdrantClient(path=str(QDRANT_PATH))
-
-        if not client.collection_exists(COLLECTION_NAME):
-            return None
-        return client
-    except Exception as exc:
-        print(f"[Retrieval] Qdrant unavailable: {exc}")
-        return None
-
-
-def _qdrant_query(client, query_vector: list[float]):
+def _qdrant_query(client, query_vector: list[float], collection_name: str = COLLECTION_NAME):
     try:
         response = client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=collection_name,
             query=query_vector,
             limit=DENSE_SEARCH_K,
             with_payload=True,
@@ -383,7 +446,7 @@ def _qdrant_query(client, query_vector: list[float]):
         return response.points
     except AttributeError:
         return client.search(
-            collection_name=COLLECTION_NAME,
+            collection_name=collection_name,
             query_vector=query_vector,
             limit=DENSE_SEARCH_K,
             with_payload=True,
@@ -422,12 +485,14 @@ def _snippet(content: str, content_limit: int) -> str:
 _RETRIEVAL_MEMORY_CACHE: dict[str, tuple[float, list[dict]]] = {}
 
 
-def _get_cached_results(query: str, top_k: int) -> list[RetrievalCandidate] | None:
+def _get_cached_results(
+    query: str, top_k: int, channel: str = DEFAULT_CHANNEL
+) -> list[RetrievalCandidate] | None:
     ttl = _cache_ttl_seconds()
     if ttl <= 0:
         return None
 
-    key = _cache_key(query, top_k)
+    key = _cache_key(query, top_k, channel)
     cached = _redis_get(key) or _memory_get(key, ttl)
     if cached is None:
         return None
@@ -435,12 +500,14 @@ def _get_cached_results(query: str, top_k: int) -> list[RetrievalCandidate] | No
     return [RetrievalCandidate.from_dict(item) for item in cached]
 
 
-def _cache_results(query: str, top_k: int, candidates: list[RetrievalCandidate]):
+def _cache_results(
+    query: str, top_k: int, candidates: list[RetrievalCandidate], channel: str = DEFAULT_CHANNEL
+):
     ttl = _cache_ttl_seconds()
     if ttl <= 0:
         return
 
-    key = _cache_key(query, top_k)
+    key = _cache_key(query, top_k, channel)
     payload = [candidate.to_dict() for candidate in candidates]
     if not _redis_set(key, payload, ttl):
         _RETRIEVAL_MEMORY_CACHE[key] = (time.time(), payload)
@@ -511,10 +578,10 @@ def _load_redis_client():
         return None
 
 
-def _cache_key(query: str, top_k: int) -> str:
+def _cache_key(query: str, top_k: int, channel: str = DEFAULT_CHANNEL) -> str:
     normalized = re.sub(r"\s+", " ", query.strip().lower())
     digest = hashlib.sha256(normalized.encode()).hexdigest()[:16]
-    return f"rag:retrieval:{top_k}:{digest}"
+    return f"rag:retrieval:{channel}:{top_k}:{digest}"
 
 
 def _cache_ttl_seconds() -> int:

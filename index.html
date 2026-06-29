@@ -22,6 +22,15 @@
             </div>
         </div>
 
+        <nav class="top-tabs" aria-label="Görünüm">
+            <button class="top-tab is-active" id="tabChat" type="button" data-tab="chat">
+                <span class="material-symbols-outlined">forum</span> Sohbet
+            </button>
+            <button class="top-tab" id="tabLibrary" type="button" data-tab="library">
+                <span class="material-symbols-outlined">menu_book</span> Kitaplık
+            </button>
+        </nav>
+
         <div class="top-actions">
             <span class="status-pill" id="statusBadge">
                 <span class="status-dot"></span>
@@ -44,7 +53,7 @@
         <span id="statusBannerText">Belgeler indeksleniyor, lütfen bekleyin…</span>
     </div>
 
-    <main class="workspace">
+    <main class="workspace" id="chatView">
         <!-- ── Conversation ───────────────────────────────────────── -->
         <section class="chat-panel" aria-label="Konuşma">
             <div class="chat-messages" id="chatMessages">
@@ -65,8 +74,13 @@
             </div>
 
             <form class="composer" id="chatForm">
+                <div id="attachPreview" class="attach-preview" hidden></div>
+                <button id="attachButton" type="button" class="attach-button" aria-label="Görsel ekle" title="Görsel ekle (yapıştırabilirsiniz)">
+                    <span class="material-symbols-outlined">image</span>
+                </button>
+                <input id="imageInput" type="file" accept="image/*" multiple hidden>
                 <div class="composer-input-wrap">
-                    <textarea id="userInput" placeholder="Bir mesaj yazın…" rows="1"></textarea>
+                    <textarea id="userInput" placeholder="Bir mesaj yazın…  (bilgi eklemek/güncellemek için @update ile başlayın)" rows="1"></textarea>
                     <div id="suggestionsDropdown" class="suggestions-dropdown" hidden></div>
                 </div>
                 <button id="sendButton" type="submit" aria-label="Gönder">
@@ -120,6 +134,14 @@
                             <span id="reviewerStatus">Kaliteyi onaylar</span>
                         </div>
                     </article>
+                    <div class="flow-connector" aria-hidden="true"></div>
+                    <article class="agent-card" id="editorCard" data-agent="editor">
+                        <span class="agent-icon material-symbols-outlined">drive_file_rename_outline</span>
+                        <div class="agent-text">
+                            <p>Editor</p>
+                            <span id="editorStatus">@update ile bilgi günceller</span>
+                        </div>
+                    </article>
                 </div>
 
                 <div class="progress-block">
@@ -171,6 +193,40 @@
         </aside>
     </main>
 
+    <!-- ── Library view (Kitaplık tab) ──────────────────────────── -->
+    <main class="library-view" id="libraryView" hidden>
+        <aside class="library-sidebar">
+            <div class="library-sidebar-head">
+                <h2>Kitaplık</h2>
+                <span class="tag" id="libraryCountTag">0</span>
+            </div>
+            <div class="library-list" id="libraryList">
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                </div>
+            </div>
+        </aside>
+
+        <section class="library-content">
+            <div class="library-content-head">
+                <h2 id="libraryDocTitle">Bir belge seçin</h2>
+                <div class="library-view-tabs" id="libraryViewTabs" hidden>
+                    <button class="lib-vtab" type="button" data-view="originals">Orijinal</button>
+                    <button class="lib-vtab is-active" type="button" data-view="workspace">Çalışma Alanı</button>
+                    <button class="lib-vtab" type="button" data-view="compare">Karşılaştır</button>
+                </div>
+                <div class="library-downloads" id="libraryDownloads"></div>
+            </div>
+            <div class="library-doc-body" id="libraryDocBody">
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">menu_book</span>
+                    <p>Soldan bir belge seçerek orijinal ve düzenlenmiş hâlini görüntüleyin veya karşılaştırın.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
     <!-- ── Upload modal ─────────────────────────────────────────── -->
     <div id="uploadModal" class="modal-overlay" hidden>
         <div class="modal-box">
@@ -183,10 +239,10 @@
 
             <div class="upload-area" id="uploadArea">
                 <span class="material-symbols-outlined">cloud_upload</span>
-                <p>PDF veya TXT dosyasını buraya sürükleyin<br>ya da tıklayarak seçin</p>
+                <p>PDF veya DOCX dosyasını buraya sürükleyin<br>ya da tıklayarak seçin</p>
                 <small>Maksimum 50 MB</small>
             </div>
-            <input type="file" id="fileInput" accept=".pdf,.txt" hidden>
+            <input type="file" id="fileInput" accept=".pdf,.docx" hidden>
 
             <div id="uploadStatus" hidden></div>
 

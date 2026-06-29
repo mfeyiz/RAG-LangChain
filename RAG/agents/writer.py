@@ -1,14 +1,51 @@
+import base64
+import mimetypes
 import os
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 from RAG.agents.state import AgentState
-from RAG.agents.supervisor import get_llm
+from RAG.agents.supervisor import get_llm, get_vision_llm
+from RAG.services import paths
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 
 # Reviewer adds a ~1s LLM round-trip — cheap, so kept on by default for quality.
 # The real latency bottleneck is retrieval (reranker), not the reviewer.
 _REVIEWER_ENABLED = os.getenv("RAG_ENABLE_REVIEWER", "1") == "1"
+_MAX_IMAGES = int(os.getenv("MAX_CONTEXT_IMAGES", "4"))
+
+
+def _file_to_data_url(path) -> str | None:
+    mime, _ = mimetypes.guess_type(str(path))
+    if not mime or not mime.startswith("image/"):
+        mime = "image/png"
+    try:
+        data = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    return f"data:{mime};base64,{data}"
+
+
+def _image_blocks(state: AgentState) -> list[dict]:
+    """Build OpenAI-style image_url content blocks from user-attached images and
+    figures anchored to the retrieved context. Bounded by _MAX_IMAGES."""
+    blocks: list[dict] = []
+
+    for data_url in state.get("query_images") or []:
+        if data_url:
+            blocks.append({"type": "image_url", "image_url": {"url": data_url}})
+
+    for img in state.get("context_images") or []:
+        path = paths.image_path(
+            img.get("channel", "workspace"), paths.stem_of(img.get("source", "")), img.get("name", "")
+        )
+        if not path:
+            continue
+        data_url = _file_to_data_url(path)
+        if data_url:
+            blocks.append({"type": "image_url", "image_url": {"url": data_url}})
+
+    return blocks[:_MAX_IMAGES]
 
 
 WRITER_SYSTEM_PROMPT = """You are a document-grounded QA assistant. Prepare an accurate response to the user's question using the provided top-5 retrieved context.
@@ -40,16 +77,17 @@ _NO_DOCS_REPLY = (
 
 
 async def writer_node(state: AgentState) -> dict:
-    llm = get_llm()
-
     with traced_observation("writer", input_payload={"query": state["query"]}) as span:
         # Topic restriction: researcher ran but found nothing — skip LLM, return early.
         research = state.get("research_results", "")
         researcher_ran = bool(state.get("rewritten_query") or research)
         no_docs = not research or research.strip() == "No relevant documents found."
         is_revision = bool(state.get("review_feedback"))
+        # A user-attached image is itself answerable content — don't short-circuit
+        # to the "no documents" reply when there's an image to reason over.
+        has_user_images = bool(state.get("query_images"))
 
-        if researcher_ran and no_docs and not is_revision:
+        if researcher_ran and no_docs and not is_revision and not has_user_images:
             await trace_event(state["trace_id"], "writer.no_docs", {"query": state["query"]})
             span.update(output={"no_docs": True})
             print("[Writer] No documents found — returning early.")
@@ -80,7 +118,19 @@ async def writer_node(state: AgentState) -> dict:
             user_content += f"\n\nPrevious Draft:\n{state['draft_response']}"
             user_content += "\n\nPlease revise your response taking the feedback into account."
 
-        messages.append(HumanMessage(content=user_content))
+        # Multimodal: when figures (from retrieval) or user-attached images are
+        # present, send them to a vision model as image_url blocks. Otherwise
+        # keep the cheaper text model and a plain string message.
+        image_blocks = _image_blocks(state)
+        if image_blocks:
+            llm = get_vision_llm()
+            messages.append(
+                HumanMessage(content=[{"type": "text", "text": user_content}, *image_blocks])
+            )
+            print(f"[Writer] Vision mode — {len(image_blocks)} image(s) attached.")
+        else:
+            llm = get_llm()
+            messages.append(HumanMessage(content=user_content))
 
         response = await invoke_with_langfuse(llm, messages)
         draft = response.content

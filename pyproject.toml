@@ -33,6 +33,14 @@ dependencies = [
     "datasets>=3.0.0",
     "langfuse>=4.7.1",
     "langgraph-checkpoint-redis>=0.4.1",
+    "markitdown[docx,pdf]>=0.1.1",
+    "markdown>=3.7",
+    "pdfminer.six>=20240706",
+    "weasyprint>=63.0",
+    # Multimodal ingestion: docling extracts figures and preserves heading
+    # structure; pillow handles the extracted image files.
+    "docling>=2.0.0",
+    "pillow>=10.0.0",
 ]
 
 [dependency-groups]

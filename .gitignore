@@ -51,3 +51,7 @@ env/
 .DS_Store
 Thumbs.dbRAG/traces/
 RAG/vector_db/qdrant/
+
+# Runtime data artifacts (uploaded docs, extracted figures, derived corpus).
+RAG/data/
+RAG/vector_db/corpus_*.jsonl

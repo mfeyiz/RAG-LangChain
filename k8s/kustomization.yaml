@@ -5,6 +5,7 @@ resources:
   - qdrant-pvc.yaml
   - model-cache-pvc.yaml
   - redis-pvc.yaml
+  - data-pvc.yaml
   - redis.yaml
   - qdrant.yaml
   - backendconfig.yaml

@@ -9,8 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# curl/ca-certificates for tooling; the libpango/cairo/gdk-pixbuf/ffi stack and
+# fonts are required by WeasyPrint to render the regenerated workspace PDFs.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        curl ca-certificates \
+        libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+        libgdk-pixbuf-2.0-0 libffi-dev libharfbuzz0b \
+        fonts-dejavu \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv
 

@@ -61,6 +61,27 @@ spec:
                 name: rag-langchain
                 port:
                   number: 80
+          - path: /workspace
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /originals
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
+          - path: /documents
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
           - path: /
             pathType: Prefix
             backend:

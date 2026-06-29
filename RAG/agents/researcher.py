@@ -7,7 +7,7 @@ from RAG.agents.state import AgentState
 import asyncio
 
 from RAG.agents.supervisor import get_llm
-from RAG.services.retrieval import FINAL_CONTEXT_K, retrieve_context_async
+from RAG.services.retrieval import DEFAULT_CHANNEL, FINAL_CONTEXT_K, retrieve_context_async
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
 from RAG.services.web_search import web_search, web_search_available
 
@@ -15,8 +15,11 @@ from RAG.services.web_search import web_search, web_search_available
 _MULTIHOP_ENABLED = os.getenv("RAG_ENABLE_MULTIHOP", "0") == "1"
 # Rewrite query only when it is long enough to benefit from reformulation.
 _REWRITE_MIN_WORDS = int(os.getenv("RAG_REWRITE_MIN_WORDS", "7"))
-# When the best RAG result scores below this, fall back to web search.
-_WEB_FALLBACK_THRESHOLD = float(os.getenv("WEB_FALLBACK_THRESHOLD", "0.35"))
+# When the best RAG result scores below this, offer a web-search fallback.
+# Kept low so genuine document matches (incl. cross-lingual Turkish queries,
+# which the reranker scores lower) are answered from the corpus instead of
+# triggering an unnecessary web-search prompt. Tune via WEB_FALLBACK_THRESHOLD.
+_WEB_FALLBACK_THRESHOLD = float(os.getenv("WEB_FALLBACK_THRESHOLD", "0.2"))
 
 QUERY_REWRITE_PROMPT = """Rewrite the user's question into a concise retrieval query.
 
@@ -25,6 +28,27 @@ Rules:
 - Expand pronouns only when the question itself provides the referent.
 - Return only the rewritten query.
 - Use the same language as the user unless proper nouns require otherwise."""
+
+
+# Cap figures forwarded to the writer so the vision prompt stays bounded.
+_MAX_CONTEXT_IMAGES = int(os.getenv("MAX_CONTEXT_IMAGES", "4"))
+
+
+def _collect_context_images(metadata: list[dict]) -> list[dict]:
+    """Gather figures anchored to the retrieved chunks (text-anchored images)."""
+    images: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in metadata:
+        source = entry.get("source", "")
+        for name in entry.get("images", []) or []:
+            key = (source, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            images.append({"source": source, "name": name, "channel": DEFAULT_CHANNEL})
+            if len(images) >= _MAX_CONTEXT_IMAGES:
+                return images
+    return images
 
 
 async def researcher_node(state: AgentState) -> dict:
@@ -64,9 +88,31 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
     print(f"[Researcher] Rewritten: {rewritten_query}")
     print(f"[Researcher] {result_count} chunks selected (top score {top_score:.4f}).")
 
-    # Fall back to web search when the corpus has no confident answer.
+    # When the corpus has no confident answer, do NOT silently go to the web.
+    # Ask the user first; only search the web once they have approved it
+    # (the UI re-runs the query with allow_web=True).
     if top_score < _WEB_FALLBACK_THRESHOLD and web_search_available():
-        print(f"[Researcher] Low RAG confidence — falling back to web search.")
+        if not state.get("allow_web"):
+            print("[Researcher] Low RAG confidence — requesting web search approval.")
+            await trace_event(
+                state["trace_id"],
+                "researcher.web_approval_requested",
+                {"query": original_query, "top_score": top_score},
+            )
+            span.update(output={"needs_web_approval": True, "top_score": top_score})
+            return {
+                "research_results": "",
+                "search_metadata": metadata,
+                "rewritten_query": rewritten_query,
+                "needs_web_approval": True,
+                "source_type": "rag",
+                "web_sources": [],
+                "hop_steps": [],
+                "hop_context": "",
+                "messages": [AIMessage(content="Awaiting web search approval.")],
+            }
+
+        print(f"[Researcher] Web search approved — querying the web.")
         web = await asyncio.to_thread(web_search, original_query)
         if web["context"]:
             await trace_event(
@@ -110,6 +156,7 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
         "web_sources": [],
         "hop_steps": [],
         "hop_context": "",
+        "context_images": _collect_context_images(metadata),
         "messages": [
             AIMessage(content=f"Research completed: {result_count} chunks found for query: {rewritten_query}")
         ],
@@ -157,6 +204,7 @@ async def _multi_hop_retrieve(state: AgentState, decomposed: dict, span) -> dict
         "rewritten_query": state["query"],
         "hop_steps": completed_steps,
         "hop_context": aggregated_context,
+        "context_images": _collect_context_images(all_metadata),
         "messages": [
             AIMessage(content=f"Multi-hop research completed: {len(steps)} hops, {len(all_metadata)} chunks.")
         ],

@@ -102,7 +102,18 @@ spec:
           volumeMounts:
             - name: model-cache
               mountPath: /cache
+            # User documents (originals + workspace markdown/pdf) and the BM25
+            # corpus files must survive restarts, so back them with a PVC.
+            - name: rag-data
+              mountPath: /app/RAG/data
+              subPath: data
+            - name: rag-data
+              mountPath: /app/RAG/vector_db
+              subPath: vector_db
       volumes:
         - name: model-cache
           persistentVolumeClaim:
             claimName: model-cache-pvc
+        - name: rag-data
+          persistentVolumeClaim:
+            claimName: rag-data-pvc

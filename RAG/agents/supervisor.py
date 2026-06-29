@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -24,6 +25,20 @@ def get_llm():
     )
 
 
+def get_vision_llm(streaming: bool = True):
+    """Vision-capable OpenRouter model used by the writer (and ingest captioning)
+    when images are in play. Kept separate from `get_llm()` so routing, query
+    rewriting, and review stay on the cheaper text model."""
+    return ChatOpenAI(
+        model=os.getenv("VISION_LLM_MODEL", "google/gemini-2.5-flash"),
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        temperature=0,
+        streaming=streaming,
+        extra_body={"provider": {"sort": "latency"}},
+    )
+
+
 async def supervisor_node(state: AgentState) -> dict:
     with traced_observation(
         "supervisor",
@@ -37,6 +52,14 @@ async def supervisor_node(state: AgentState) -> dict:
     ) as span:
         if state.get("final_response"):
             print("[Supervisor] Decision: finish")
+            await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "finish"})
+            span.update(output={"next_agent": "finish"})
+            return {"next_agent": "finish"}
+
+        # Researcher found weak RAG results and is asking the user before going to
+        # the web — stop the graph and let the UI surface the approval prompt.
+        if state.get("needs_web_approval"):
+            print("[Supervisor] Decision: finish (awaiting web search approval)")
             await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "finish"})
             span.update(output={"next_agent": "finish"})
             return {"next_agent": "finish"}
@@ -59,8 +82,16 @@ async def supervisor_node(state: AgentState) -> dict:
             span.update(output={"next_agent": "writer"})
             return {"next_agent": "writer"}
 
-        # Initial state: nothing set yet. Route to researcher unless it is a
-        # short social phrase that needs no document lookup.
+        # Initial state: nothing set yet. An @update message is a write-back
+        # request and goes to the editor instead of the read-only RAG path.
+        if re.search(r"@update\b", state["query"], flags=re.IGNORECASE):
+            print("[Supervisor] Decision: editor")
+            await trace_event(state["trace_id"], "supervisor.decision", {"next_agent": "editor"})
+            span.update(output={"next_agent": "editor"})
+            return {"next_agent": "editor"}
+
+        # Route to researcher unless it is a short social phrase that needs no
+        # document lookup.
         _SOCIAL = frozenset([
             "merhaba", "selam", "hello", "hi", "hey", "teşekkür", "teşekkürler",
             "thanks", "thank", "günaydın", "iyi", "nasılsın", "görüşürüz", "bye",

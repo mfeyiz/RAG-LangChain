@@ -1,0 +1,75 @@
+/* Corporate base stylesheet for regenerated workspace PDFs.
+   Dynamic per-document overrides (page size, margins, base font) are injected
+   ahead of this sheet by pdf_renderer._build_css(). */
+
+body {
+    font-family: var(--doc-font, "DejaVu Serif", "Times New Roman", serif);
+    font-size: var(--doc-font-size, 11pt);
+    line-height: 1.45;
+    color: #1a1a1a;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: "DejaVu Sans", "Helvetica", sans-serif;
+    color: #14213d;
+    line-height: 1.25;
+    margin: 1.1em 0 0.5em;
+    page-break-after: avoid;
+}
+
+h1 { font-size: 1.9em; border-bottom: 2px solid #14213d; padding-bottom: 0.2em; }
+h2 { font-size: 1.45em; border-bottom: 1px solid #c9ced6; padding-bottom: 0.15em; }
+h3 { font-size: 1.2em; }
+
+p { margin: 0.5em 0; text-align: justify; }
+
+a { color: #1d4ed8; text-decoration: none; }
+
+ul, ol { margin: 0.5em 0 0.5em 1.4em; }
+li { margin: 0.25em 0; }
+
+blockquote {
+    margin: 0.8em 0;
+    padding: 0.4em 1em;
+    border-left: 4px solid #c9ced6;
+    color: #444;
+    background: #f7f8fa;
+}
+
+code, pre {
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 0.9em;
+}
+pre {
+    background: #f4f5f7;
+    padding: 0.8em 1em;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+code { background: #f0f1f3; padding: 0.1em 0.3em; border-radius: 3px; }
+pre code { background: none; padding: 0; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.9em 0;
+    font-size: 0.95em;
+    page-break-inside: avoid;
+}
+th, td {
+    border: 1px solid #b9bfc9;
+    padding: 0.45em 0.6em;
+    text-align: left;
+    vertical-align: top;
+}
+thead th {
+    background: #14213d;
+    color: #fff;
+    font-family: "DejaVu Sans", sans-serif;
+}
+tbody tr:nth-child(even) { background: #f5f6f8; }
+
+img { max-width: 100%; }
+
+hr { border: none; border-top: 1px solid #c9ced6; margin: 1.2em 0; }

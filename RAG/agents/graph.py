@@ -9,6 +9,7 @@ from RAG.agents.supervisor import supervisor_node
 from RAG.agents.researcher import researcher_node
 from RAG.agents.writer import writer_node
 from RAG.agents.reviewer import reviewer_node
+from RAG.agents.editor import editor_node
 
 
 def route_supervisor(state: AgentState) -> str:
@@ -27,6 +28,7 @@ async def create_graph():
     workflow.add_node("researcher", researcher_node)
     workflow.add_node("writer", writer_node)
     workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("editor", editor_node)
 
     workflow.set_entry_point("supervisor")
 
@@ -37,6 +39,7 @@ async def create_graph():
             "researcher": "researcher",
             "writer": "writer",
             "reviewer": "reviewer",
+            "editor": "editor",
             "finish": END,
         },
     )
@@ -44,6 +47,7 @@ async def create_graph():
     workflow.add_edge("researcher", "supervisor")
     workflow.add_edge("writer", "supervisor")
     workflow.add_edge("reviewer", "supervisor")
+    workflow.add_edge("editor", "supervisor")
 
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
 

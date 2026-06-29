@@ -24,6 +24,19 @@ const fileInput         = document.getElementById("fileInput");
 const uploadStatus      = document.getElementById("uploadStatus");
 const docList           = document.getElementById("docList");
 const docCountTag       = document.getElementById("docCountTag");
+const chatView          = document.getElementById("chatView");
+const libraryView       = document.getElementById("libraryView");
+const tabChat           = document.getElementById("tabChat");
+const tabLibrary        = document.getElementById("tabLibrary");
+const libraryList       = document.getElementById("libraryList");
+const libraryCountTag   = document.getElementById("libraryCountTag");
+const libraryViewTabs   = document.getElementById("libraryViewTabs");
+const libraryDocTitle   = document.getElementById("libraryDocTitle");
+const libraryDocBody    = document.getElementById("libraryDocBody");
+const libraryDownloads  = document.getElementById("libraryDownloads");
+const attachButton      = document.getElementById("attachButton");
+const imageInput        = document.getElementById("imageInput");
+const attachPreview     = document.getElementById("attachPreview");
 const suggestionsDropdown = document.getElementById("suggestionsDropdown");
 const statusBanner      = document.getElementById("statusBanner");
 const statusBannerText  = document.getElementById("statusBannerText");
@@ -38,15 +51,17 @@ const FEEDBACK_URL     = "/feedback";
 const UPLOAD_URL       = "/upload";
 const STATUS_URL       = "/status";
 const ADMIN_DOCS_URL   = "/admin/documents";
+const DOC_CONTENT_URL  = "/documents";
 
-const AGENT_ORDER    = ["supervisor", "researcher", "writer", "reviewer"];
-const AGENT_PROGRESS = { supervisor: 18, researcher: 45, writer: 74, reviewer: 92 };
-const AGENT_LABELS   = { supervisor: "Supervisor", researcher: "Researcher", writer: "Writer", reviewer: "Reviewer" };
+const AGENT_ORDER    = ["supervisor", "researcher", "writer", "reviewer", "editor"];
+const AGENT_PROGRESS = { supervisor: 18, researcher: 45, writer: 74, reviewer: 92, editor: 74 };
+const AGENT_LABELS   = { supervisor: "Supervisor", researcher: "Researcher", writer: "Writer", reviewer: "Reviewer", editor: "Editor" };
 const AGENT_MESSAGES = {
     supervisor: "Yönlendirme kararı veriliyor",
     researcher: "Vektör veritabanı taranıyor",
     writer:     "Kanıtlara dayalı yanıt yazılıyor",
     reviewer:   "Cevap kalite kontrolden geçiyor",
+    editor:     "Bilgi güncelleniyor ve yeniden indeksleniyor",
 };
 
 /* ── Session state ───────────────────────────────────────────── */
@@ -57,6 +72,39 @@ let currentTraceId = "";
 let elapsedTimer  = null;
 let startedAt     = 0;
 let visitedAgents = new Set();
+
+/* ── Multimodal attachments (data URLs sent with the next query) ── */
+let pendingImages = [];
+
+function renderAttachPreview() {
+    if (!attachPreview) return;
+    attachPreview.innerHTML = "";
+    attachPreview.hidden = pendingImages.length === 0;
+    pendingImages.forEach((dataUrl, i) => {
+        const thumb = document.createElement("div");
+        thumb.className = "attach-thumb";
+        const img = document.createElement("img");
+        img.src = dataUrl;
+        thumb.appendChild(img);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "attach-remove";
+        remove.setAttribute("aria-label", "Kaldır");
+        remove.innerHTML = `<span class="material-symbols-outlined">close</span>`;
+        remove.addEventListener("click", () => { pendingImages.splice(i, 1); renderAttachPreview(); });
+        thumb.appendChild(remove);
+        attachPreview.appendChild(thumb);
+    });
+}
+
+function addImageFiles(files) {
+    Array.from(files || []).forEach((file) => {
+        if (!file.type.startsWith("image/") || pendingImages.length >= 4) return;
+        const reader = new FileReader();
+        reader.onload = () => { pendingImages.push(reader.result); renderAttachPreview(); };
+        reader.readAsDataURL(file);
+    });
+}
 
 /* ── Suggestions state ───────────────────────────────────────── */
 let suggestDebounce = null;
@@ -69,14 +117,24 @@ let currentSuggestions = [];
 async function sendMessage() {
     const message = userInput.value.trim();
     if (!message || sendButton.disabled) return;
+    userInput.value = "";
+    autoResize();
+    runQuery(message);
+}
+
+// Core query runner. `allowWeb` re-runs an approved web-search fallback;
+// `echoUser=false` skips re-printing the user bubble for those re-runs.
+async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
+    if (!message || sendButton.disabled) return;
 
     hideSuggestions();
     resetRunState();
     const welcome = chatMessages.querySelector(".welcome");
     if (welcome) welcome.remove();
-    addMessage(message, "user");
-    userInput.value = "";
-    autoResize();
+    // Attach images only on the first run of a query (not on web-approval re-runs).
+    const outgoingImages = (echoUser && !allowWeb) ? pendingImages.slice() : [];
+    if (echoUser) addMessage(message, "user", outgoingImages);
+    if (outgoingImages.length) { pendingImages = []; renderAttachPreview(); }
     setControlsDisabled(true);
 
     setStatus("Running", "running");
@@ -91,12 +149,14 @@ async function sendMessage() {
     let streamingStarted  = false;
     let feedbackAdded     = false;
     let completed         = false;
+    let webSources        = null;   // web result list, used to linkify citations
+    let awaitingApproval  = false;  // showing the "search the web?" prompt
 
     try {
         const response = await fetch(API_URL, {
             method:  "POST",
             headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-            body:    JSON.stringify({ query: message, session_id: currentSessionId }),
+            body:    JSON.stringify({ query: message, session_id: currentSessionId, allow_web: allowWeb, images: outgoingImages }),
         });
 
         if (!response.ok || !response.body) {
@@ -125,12 +185,36 @@ async function sendMessage() {
             if (event.event === "search_results") {
                 const results = safeJson(event.data) || [];
                 showSearchResults(results);
-                const isWeb = results.some((r) => r.origin === "web");
-                if (isWeb) {
-                    addSourceBadge(botMessageDiv, "web");
-                    logEvent("retrieval", `RAG'de bulunamadı — internetten ${results.length} kaynak getirildi.`);
+                const webResults = results.filter((r) => r.origin === "web");
+                if (webResults.length) {
+                    webSources = webResults;
+                    logEvent("retrieval", `İnternetten ${webResults.length} kaynak getirildi.`);
                 } else {
                     logEvent("retrieval", `${results.length} doküman skoru alındı.`);
+                }
+            }
+
+            /* figures anchored to the retrieved context */
+            if (event.event === "context_images") {
+                const images = safeJson(event.data) || [];
+                showContextImages(botMessageDiv, images);
+                if (images.length) logEvent("retrieval", `${images.length} ilgili görsel bulundu.`);
+            }
+
+            /* weak RAG match — ask before searching the web */
+            if (event.event === "web_search_prompt") {
+                const payload = safeJson(event.data) || {};
+                awaitingApproval = true;
+                streamingStarted = true;
+                showWebSearchPrompt(botMessageDiv, payload.query || message);
+            }
+
+            /* editor write-back result (@update) */
+            if (event.event === "edit_result") {
+                const payload = safeJson(event.data);
+                if (payload) {
+                    showEditResult(botMessageDiv, payload);
+                    loadLibrary();  // reflect the new chunk count / edited file
                 }
             }
 
@@ -148,7 +232,7 @@ async function sendMessage() {
                 streamingStarted = true;
                 contentDiv.classList.remove("is-streaming");
                 fullText = event.data;
-                contentDiv.textContent = fullText;
+                renderAnswer(contentDiv, fullText, webSources);
                 scrollToBottom();
 
                 if (!feedbackAdded) {
@@ -173,7 +257,7 @@ async function sendMessage() {
             }
         }
 
-        if (!fullText.trim()) {
+        if (!fullText.trim() && !awaitingApproval) {
             contentDiv.textContent = "Akış tamamlandı fakat yanıt metni üretilmedi.";
         }
         if (!completed) markComplete();
@@ -191,6 +275,69 @@ async function sendMessage() {
         setControlsDisabled(false);
         userInput.focus();
     }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   EDITOR WRITE-BACK RESULT (@update)
+═══════════════════════════════════════════════════════════════ */
+function showEditResult(botMessageDiv, payload) {
+    const card = document.createElement("div");
+    card.className = "edit-result";
+
+    if (payload.file) {
+        card.classList.add("is-clickable");
+        card.title = "Güncellenen belgeyi görüntüle";
+        card.addEventListener("click", (e) => {
+            if (e.target.closest("a")) return;  // let the download link work normally
+            openUpdatedDoc(payload.file);
+        });
+    }
+
+    const title = document.createElement("div");
+    title.className = "edit-result-title";
+    title.innerHTML = `<span class="material-symbols-outlined">drive_file_rename_outline</span> ${payload.file || "Çalışma alanı güncellendi"}`;
+    card.appendChild(title);
+
+    if (payload.summary) {
+        const summary = document.createElement("p");
+        summary.className = "edit-result-summary";
+        summary.textContent = payload.summary;
+        card.appendChild(summary);
+    }
+
+    if (payload.pdf_url) {
+        const link = document.createElement("a");
+        link.className = "edit-result-download";
+        link.href = payload.pdf_url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.innerHTML = `<span class="material-symbols-outlined">download</span> Güncel PDF'i indir`;
+        card.appendChild(link);
+    }
+
+    if (payload.file) {
+        const hint = document.createElement("div");
+        hint.className = "edit-result-hint";
+        hint.innerHTML = `<span class="material-symbols-outlined">open_in_new</span> Değişikliği görmek için tıklayın`;
+        card.appendChild(hint);
+    }
+
+    botMessageDiv.appendChild(card);
+    logEvent("editor", `Çalışma alanı güncellendi: ${payload.file || ""}`);
+    scrollToBottom();
+}
+
+// Jump from an @update result card straight to the edited document, showing the
+// originals↔workspace diff and scrolling to the first changed line so the user
+// can immediately see (and confirm) what was written.
+async function openUpdatedDoc(source) {
+    switchTab("library");
+    await selectDoc(source);
+    renderDocView("compare");
+    requestAnimationFrame(() => {
+        const firstChange = libraryDocBody.querySelector(".diff-line.added, .diff-line.removed");
+        if (firstChange) firstChange.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -322,6 +469,16 @@ userInput.addEventListener("input", () => {
     suggestDebounce = setTimeout(() => fetchSuggestions(q), 320);
 });
 
+/* Image attachments: button, file picker, and clipboard paste. */
+if (attachButton) attachButton.addEventListener("click", () => imageInput?.click());
+if (imageInput) imageInput.addEventListener("change", () => { addImageFiles(imageInput.files); imageInput.value = ""; });
+userInput.addEventListener("paste", (e) => {
+    const items = Array.from(e.clipboardData?.items || []).filter((it) => it.type.startsWith("image/"));
+    if (!items.length) return;
+    e.preventDefault();
+    addImageFiles(items.map((it) => it.getAsFile()).filter(Boolean));
+});
+
 userInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
 
@@ -404,6 +561,13 @@ uploadButton.addEventListener("click", () => { uploadModal.hidden = false; clear
 uploadModalClose.addEventListener("click", () => { uploadModal.hidden = true; clearUploadStatus(); });
 uploadModal.addEventListener("click", (e) => { if (e.target === uploadModal) { uploadModal.hidden = true; clearUploadStatus(); } });
 
+tabChat.addEventListener("click", () => switchTab("chat"));
+tabLibrary.addEventListener("click", () => switchTab("library"));
+libraryViewTabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".lib-vtab");
+    if (btn) renderDocView(btn.dataset.view);
+});
+
 uploadArea.addEventListener("click", () => fileInput.click());
 
 uploadArea.addEventListener("dragover",  (e) => { e.preventDefault(); uploadArea.classList.add("drag-over"); });
@@ -421,10 +585,10 @@ fileInput.addEventListener("change", () => {
 });
 
 async function uploadFile(file) {
-    const allowed = [".pdf", ".txt"];
+    const allowed = [".pdf", ".docx"];
     const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
     if (!allowed.includes(ext)) {
-        showUploadStatus("Sadece .pdf ve .txt dosyaları desteklenir.", "error");
+        showUploadStatus("Sadece .pdf ve .docx dosyaları desteklenir.", "error");
         return;
     }
 
@@ -448,6 +612,7 @@ async function uploadFile(file) {
         );
         logEvent("upload", `${data.filename} → ${data.chunks_added} chunk eklendi.`);
         loadDocumentList();
+        loadLibrary();
     } catch (err) {
         showUploadStatus(`Yükleme başarısız: ${err.message}`, "error");
     }
@@ -538,11 +703,197 @@ async function deleteDocument(source, rowEl) {
                     <p>Henüz belge yok.</p>
                 </div>`;
         }
+        loadLibrary();
     } catch {
         alert("Silme isteği başarısız oldu.");
         rowEl.classList.remove("is-deleting");
     }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   LIBRARY TAB (view + compare originals vs workspace)
+═══════════════════════════════════════════════════════════════ */
+let libraryDoc = null;   // { source, original, workspace, original_url, workspace_pdf_url }
+let libraryView_ = "workspace";
+
+function switchTab(tab) {
+    const isLibrary = tab === "library";
+    chatView.hidden = isLibrary;
+    libraryView.hidden = !isLibrary;
+    tabChat.classList.toggle("is-active", !isLibrary);
+    tabLibrary.classList.toggle("is-active", isLibrary);
+    if (isLibrary) loadLibrary();
+}
+
+async function loadLibrary() {
+    try {
+        const res  = await fetch(`${ADMIN_DOCS_URL}?channel=workspace`);
+        const data = await res.json();
+        const docs = data.documents || [];
+
+        libraryCountTag.textContent = String(docs.length);
+        if (!docs.length) {
+            libraryList.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                </div>`;
+            return;
+        }
+
+        libraryList.innerHTML = "";
+        docs.forEach((doc) => {
+            const row = document.createElement("button");
+            row.type = "button";
+            row.className = "library-row";
+            row.dataset.source = doc.source;
+            if (libraryDoc && libraryDoc.source === doc.source) row.classList.add("is-active");
+            row.innerHTML = `
+                <span class="material-symbols-outlined">description</span>
+                <span class="library-row-text">
+                    <span class="library-row-name">${escapeHtml(doc.source)}</span>
+                    <span class="library-row-meta">${doc.chunks} chunk</span>
+                </span>`;
+            row.addEventListener("click", () => selectDoc(doc.source));
+            libraryList.appendChild(row);
+        });
+    } catch {
+        libraryCountTag.textContent = "!";
+        libraryList.innerHTML = `<div class="empty-state"><p>Belgeler yüklenemedi.</p></div>`;
+    }
+}
+
+async function selectDoc(source) {
+    libraryDocTitle.textContent = source;
+    libraryViewTabs.hidden = false;
+    libraryDownloads.innerHTML = "";
+    libraryDocBody.innerHTML = `<div class="compare-loading">Yükleniyor…</div>`;
+    libraryList.querySelectorAll(".library-row").forEach((r) =>
+        r.classList.toggle("is-active", r.dataset.source === source));
+
+    try {
+        const [origRes, wsRes] = await Promise.all([
+            fetch(`${DOC_CONTENT_URL}/${encodeURIComponent(source)}/content?channel=originals`),
+            fetch(`${DOC_CONTENT_URL}/${encodeURIComponent(source)}/content?channel=workspace`),
+        ]);
+        const orig = origRes.ok ? await origRes.json() : { markdown: "" };
+        const ws   = wsRes.ok   ? await wsRes.json()   : { markdown: "" };
+
+        libraryDoc = {
+            source,
+            original: orig.markdown || "",
+            workspace: ws.markdown || "",
+            original_url: orig.original_url || "",
+            workspace_pdf_url: ws.workspace_pdf_url || "",
+        };
+
+        let dl = "";
+        if (libraryDoc.original_url)
+            dl += `<a class="ghost-button" href="${libraryDoc.original_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">picture_as_pdf</span> Orijinal</a>`;
+        if (libraryDoc.workspace_pdf_url)
+            dl += `<a class="ghost-button" href="${libraryDoc.workspace_pdf_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">download</span> Güncel PDF</a>`;
+        libraryDownloads.innerHTML = dl;
+
+        renderDocView(libraryView_);
+    } catch {
+        libraryDocBody.innerHTML = `<div class="compare-loading">Belge yüklenemedi.</div>`;
+    }
+}
+
+function renderDocView(view) {
+    libraryView_ = view;
+    libraryViewTabs.querySelectorAll(".lib-vtab").forEach((b) =>
+        b.classList.toggle("is-active", b.dataset.view === view));
+    if (!libraryDoc) return;
+
+    if (view === "compare") {
+        const rows = diffLines(libraryDoc.original.split("\n"), libraryDoc.workspace.split("\n"));
+        let left = "", right = "";
+        rows.forEach((r) => {
+            const lCls = r.type === "removed" ? "removed" : (r.type === "added" ? "filler" : "same");
+            const rCls = r.type === "added"   ? "added"   : (r.type === "removed" ? "filler" : "same");
+            left  += `<div class="diff-line ${lCls}">${r.left  === null ? "" : escapeHtml(r.left)  || "&nbsp;"}</div>`;
+            right += `<div class="diff-line ${rCls}">${r.right === null ? "" : escapeHtml(r.right) || "&nbsp;"}</div>`;
+        });
+        const identical = libraryDoc.original === libraryDoc.workspace;
+        libraryDocBody.innerHTML = `
+            ${identical ? `<div class="compare-note">Orijinal ve çalışma alanı şu an aynı (henüz düzenleme yapılmamış).</div>` : ""}
+            <div class="compare-grid">
+                <div class="compare-col">
+                    <div class="compare-col-head">Orijinal <small>(salt-okunur)</small></div>
+                    <div class="compare-pane">${left}</div>
+                </div>
+                <div class="compare-col">
+                    <div class="compare-col-head">Çalışma Alanı <small>(düzenlenen)</small></div>
+                    <div class="compare-pane">${right}</div>
+                </div>
+            </div>`;
+        return;
+    }
+
+    const md = view === "originals" ? libraryDoc.original : libraryDoc.workspace;
+    libraryDocBody.innerHTML = `<article class="md-render">${renderMarkdown(md)}</article>`;
+}
+
+/* Minimal, safe Markdown → HTML renderer (escapes first, then formats). */
+function renderMarkdown(md) {
+    const lines = (md || "").split("\n");
+    let html = "", inCode = false, listType = null;
+    const closeList = () => { if (listType) { html += `</${listType}>`; listType = null; } };
+    const inline = (t) => escapeHtml(t)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+        .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+    for (const raw of lines) {
+        const line = raw.replace(/\s+$/, "");
+        if (line.trim().startsWith("```")) { inCode = !inCode; html += inCode ? "<pre><code>" : "</code></pre>"; continue; }
+        if (inCode) { html += escapeHtml(raw) + "\n"; continue; }
+
+        const h = /^(#{1,6})\s+(.*)$/.exec(line);
+        if (h) { closeList(); const n = h[1].length; html += `<h${n}>${inline(h[2])}</h${n}>`; continue; }
+        if (/^\s*[-*+]\s+/.test(line)) { if (listType !== "ul") { closeList(); listType = "ul"; html += "<ul>"; } html += `<li>${inline(line.replace(/^\s*[-*+]\s+/, ""))}</li>`; continue; }
+        if (/^\s*\d+\.\s+/.test(line)) { if (listType !== "ol") { closeList(); listType = "ol"; html += "<ol>"; } html += `<li>${inline(line.replace(/^\s*\d+\.\s+/, ""))}</li>`; continue; }
+        if (/^\s*>\s?/.test(line)) { closeList(); html += `<blockquote>${inline(line.replace(/^\s*>\s?/, ""))}</blockquote>`; continue; }
+        if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { closeList(); html += "<hr>"; continue; }
+        if (line.includes("|") && line.split("|").length > 2 && /\S/.test(line)) { closeList(); html += renderTableRow(line, inline); continue; }
+        if (!line.trim()) { closeList(); continue; }
+        closeList(); html += `<p>${inline(line)}</p>`;
+    }
+    closeList();
+    if (inCode) html += "</code></pre>";
+    return html.replace(/(<tr[\s\S]*?<\/tr>)(?!\s*<tr)/g, "<table>$&</table>")
+               .replace(/<\/table>\s*<table>/g, "");
+}
+
+function renderTableRow(line, inline) {
+    if (/^\s*\|?[\s:|-]+\|?\s*$/.test(line)) return "";  // separator row
+    const cells = line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|");
+    return "<tr>" + cells.map((c) => `<td>${inline(c.trim())}</td>`).join("") + "</tr>";
+}
+
+/* LCS-based line diff → aligned rows {left, right, type: same|added|removed}. */
+function diffLines(a, b) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+    for (let i = m - 1; i >= 0; i--) {
+        for (let j = n - 1; j >= 0; j--) {
+            dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+    }
+    const rows = [];
+    let i = 0, j = 0;
+    while (i < m && j < n) {
+        if (a[i] === b[j]) { rows.push({ left: a[i], right: b[j], type: "same" }); i++; j++; }
+        else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ left: a[i], right: null, type: "removed" }); i++; }
+        else { rows.push({ left: null, right: b[j], type: "added" }); j++; }
+    }
+    while (i < m) rows.push({ left: a[i++], right: null, type: "removed" });
+    while (j < n) rows.push({ left: null, right: b[j++], type: "added" });
+    return rows;
+}
+
 
 /* ══════════════════════════════════════════════════════════════
    SYSTEM STATUS (model load + indexing)
@@ -740,21 +1091,66 @@ function showSearchResults(results) {
     });
 }
 
-function addSourceBadge(botMessageDiv, origin) {
-    if (botMessageDiv.querySelector(".source-badge")) return;
-    const badge = document.createElement("div");
-    badge.className = "source-badge";
-    badge.innerHTML = origin === "web"
-        ? `<span class="material-symbols-outlined">public</span> İnternetten bulundu`
-        : `<span class="material-symbols-outlined">database</span> Belgelerden bulundu`;
-    const content = botMessageDiv.querySelector(".message-content");
-    botMessageDiv.insertBefore(badge, content.nextSibling);
+// Render the answer text. When it was sourced from the web, turn [n] citation
+// tags into blue links pointing at the matching web source.
+function renderAnswer(contentDiv, text, webSources) {
+    if (webSources && webSources.length) {
+        contentDiv.innerHTML = linkifyCitations(text, webSources);
+    } else {
+        contentDiv.textContent = text;
+    }
+}
+
+function linkifyCitations(text, sources) {
+    return escapeHtml(text).replace(/\[(\d+)\]/g, (match, n) => {
+        const src = sources[parseInt(n, 10) - 1];
+        const url = src && src.source;
+        if (url && /^https?:\/\//i.test(url)) {
+            return `<a class="cite-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(src.title || url)}">[${n}]</a>`;
+        }
+        return match;
+    });
+}
+
+// Weak RAG match: ask the user before falling back to a web search.
+function showWebSearchPrompt(botMessageDiv, query) {
+    const contentDiv = botMessageDiv.querySelector(".message-content");
+    contentDiv.textContent =
+        "Bu soruyla ilgili belgelerde yeterli bilgi bulamadım. İnternette aramamı ister misiniz?";
+
+    const actions = document.createElement("div");
+    actions.className = "web-approval";
+
+    const yesBtn = document.createElement("button");
+    yesBtn.className = "web-approval-btn yes";
+    yesBtn.innerHTML = `<span class="material-symbols-outlined">travel_explore</span> Evet, internette ara`;
+
+    const noBtn = document.createElement("button");
+    noBtn.className = "web-approval-btn no";
+    noBtn.textContent = "Hayır, gerek yok";
+
+    yesBtn.addEventListener("click", () => {
+        actions.remove();
+        logEvent("retrieval", "Kullanıcı internet aramasını onayladı.");
+        runQuery(query, { allowWeb: true, echoUser: false });
+    });
+    noBtn.addEventListener("click", () => {
+        actions.remove();
+        contentDiv.textContent = "Anlaşıldı, internette arama yapılmadı.";
+        logEvent("retrieval", "Kullanıcı internet aramasını reddetti.");
+    });
+
+    actions.appendChild(yesBtn);
+    actions.appendChild(noBtn);
+    botMessageDiv.appendChild(actions);
+    logEvent("retrieval", "Belgelerde bulunamadı — kullanıcı onayı bekleniyor.");
+    scrollToBottom();
 }
 
 /* ══════════════════════════════════════════════════════════════
    CHAT MESSAGES
 ═══════════════════════════════════════════════════════════════ */
-function addMessage(text, type) {
+function addMessage(text, type, images = []) {
     const div     = document.createElement("div");
     div.className = `message ${type}-message`;
 
@@ -766,11 +1162,44 @@ function addMessage(text, type) {
     content.className   = "message-content";
     content.textContent = text;
 
+    if (images && images.length) {
+        const gallery = document.createElement("div");
+        gallery.className = "message-images";
+        images.forEach((src) => {
+            const img = document.createElement("img");
+            img.src = src;
+            img.loading = "lazy";
+            gallery.appendChild(img);
+        });
+        content.appendChild(gallery);
+    }
+
     div.appendChild(avatar);
     div.appendChild(content);
     chatMessages.appendChild(div);
     scrollToBottom();
     return div;
+}
+
+/* Render figures retrieved from the corpus, anchored under the answer. */
+function showContextImages(botMessageDiv, images) {
+    if (!images || !images.length) return;
+    const gallery = document.createElement("div");
+    gallery.className = "context-images";
+    images.forEach((item) => {
+        const link = document.createElement("a");
+        link.href = item.url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.title = item.source || "";
+        const img = document.createElement("img");
+        img.src = item.url;
+        img.loading = "lazy";
+        img.alt = item.name || "figure";
+        link.appendChild(img);
+        gallery.appendChild(link);
+    });
+    botMessageDiv.appendChild(gallery);
 }
 
 function createBotMessage() {
@@ -933,4 +1362,6 @@ window.addEventListener("load", () => {
     // Gate input until models are loaded and the index is built.
     pollStatus();
     statusPollTimer = setInterval(pollStatus, 3000);
+
+    loadLibrary();
 });
