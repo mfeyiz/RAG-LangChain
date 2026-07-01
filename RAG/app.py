@@ -916,6 +916,12 @@ async def admin_feedback(request: Request, limit: int = Query(default=50, le=200
     return {"feedback": list_feedback(limit=limit)}
 
 
+from fastapi.staticfiles import StaticFiles
+
+ROOT = Path(__file__).resolve().parent.parent
+app.mount("/", StaticFiles(directory=str(ROOT), html=True), name="static")
+
+
 if __name__ == "__main__":
     import uvicorn
 
