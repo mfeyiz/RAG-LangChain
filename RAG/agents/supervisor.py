@@ -249,7 +249,17 @@ _CALC_HINTS = (
     "correlation", "pie chart",
 )
 
+# Arithmetic between two numbers: "5 + 3", "12*4", "80 / 4", "50 % 2", "3 x 4".
+_ARITH_RE = re.compile(r"\d+(?:\.\d+)?\s*[-+*/x×÷^%]\s*\d+(?:\.\d+)?")
+# A series of 3+ numbers separated by commas/semicolons — chart/plot data such
+# as "plot 10, 20, 30". A lone multi-digit number (a year, version, or figure)
+# must NOT match, which the previous "\d+ ... \d+" pattern did (it split "2022"
+# into "202" + "2" and mis-routed any dated question to the code interpreter).
+_NUM_SERIES_RE = re.compile(r"\b\d+(?:\.\d+)?\b(?:\s*[,;]\s*\d+(?:\.\d+)?){2,}")
+
 
 def _looks_like_calculation(query: str) -> bool:
     q = query.lower()
-    return any(h in q for h in _CALC_HINTS) or bool(re.search(r"\b\d+\s*[%@]?\s*[,•-]?\s*\d+", q))
+    if any(h in q for h in _CALC_HINTS):
+        return True
+    return bool(_ARITH_RE.search(q) or _NUM_SERIES_RE.search(q))
