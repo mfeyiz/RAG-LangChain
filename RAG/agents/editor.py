@@ -27,6 +27,11 @@ from RAG.services.version_control import commit_change
 
 _DEFAULT_NOTES_SOURCE = "notes.md"
 
+# A located section larger than this is treated as "too coarse to rewrite whole"
+# (typically a heading-less document whose only section is the entire file). The
+# editor then narrows the edit to the matched passage instead.
+MAX_SECTION_CHARS = 3500
+
 SECTION_EDITOR_SYSTEM_PROMPT = """You maintain a Markdown knowledge base. You are given ONE SECTION of a document and an UPDATE INSTRUCTION. Apply the instruction to that section and return the WHOLE, REWRITTEN SECTION.
 
 Hard rules:
@@ -92,7 +97,7 @@ async def editor_node(state: AgentState) -> dict:
         # strings contribute to the semantic search.
         search_text = f"{recent_context} {raw_instruction}".strip()
 
-        source, section, heading_path = await asyncio.to_thread(_locate_target, search_text)
+        source, section, heading_path, child_anchor = await asyncio.to_thread(_locate_target, search_text)
         md_path = paths.workspace_md_path(source)
         current = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
 
@@ -112,6 +117,18 @@ async def editor_node(state: AgentState) -> dict:
             idx = current.index(section)
             section_bounds = (idx, idx + len(section))
             section_text = section
+
+        # Level 1.5: whitespace-normalized match of the whole parent_content.
+        # MarkdownHeaderTextSplitter normalizes whitespace, so the stored
+        # parent_content usually differs from the on-disk section only by spacing
+        # (hard-break "  \n", collapsed blank lines). Without this, heading-less
+        # sections (empty heading_path) fell through every level and the edit was
+        # blindly appended at the end of the file instead of rewritten in place.
+        if not section_bounds and section:
+            found = _find_section_by_normalized_match(current, section)
+            if found:
+                section_bounds = found
+                section_text = current[found[0]:found[1]]
 
         # Level 2: locate section via stored heading_path
         if not section_bounds and heading_path:
@@ -158,6 +175,23 @@ async def editor_node(state: AgentState) -> dict:
                 section_bounds = found
                 section_text = current[found[0]:found[1]]
 
+        # ── Narrow oversized sections to the matched passage ────────────────
+        # Heading-less documents have no heading tree, so the "parent section"
+        # is the ENTIRE file. Rewriting a whole 25k-char document through the LLM
+        # risks truncation and is what the small-patch design exists to avoid.
+        # When the located section is too large, or nothing was located at all,
+        # fall back to the specific matched passage (the child chunk) and rewrite
+        # just the paragraph around it — so the edit lands in the right place
+        # instead of being appended at the end of the file.
+        narrowed_to_passage = False
+        too_large = section_bounds is not None and (section_bounds[1] - section_bounds[0]) > MAX_SECTION_CHARS
+        if (section_bounds is None or too_large) and child_anchor:
+            passage = _find_passage_around_anchor(current, child_anchor)
+            if passage:
+                section_bounds = passage
+                section_text = current[passage[0]:passage[1]]
+                narrowed_to_passage = True
+
         # ── Build LLM prompt ────────────────────────────────────────────────
         verbatim_suffix = _verbatim_block(verbatim_list)
         chart_suffix = (
@@ -193,7 +227,7 @@ async def editor_node(state: AgentState) -> dict:
                 new_section += "\n\n" + chart_embed["markdown"]
             start, end = section_bounds
             updated = current[:start] + new_section + current[end:]
-            change = "section_rewrite"
+            change = "passage_rewrite" if narrowed_to_passage else "section_rewrite"
 
         if updated is None or updated.strip() == current.strip():
             span.update(output={"error": "no_change"})
@@ -239,14 +273,17 @@ async def editor_node(state: AgentState) -> dict:
         }
 
 
-def _locate_target(search_text: str) -> tuple[str, str, str]:
+def _locate_target(search_text: str) -> tuple[str, str, str, str]:
     """Find the workspace file and the full parent SECTION for this topic.
 
-    Returns ``(source, parent_content, heading_path)`` where ``parent_content``
-    is the verbatim Markdown of the heading section the top match belongs to —
-    the unit the editor rewrites in place — and ``heading_path`` is that
-    section's heading trail (e.g. ``"Security > Threats"``) used to relocate the
-    section in the file even if ``parent_content`` drifted from the on-disk text.
+    Returns ``(source, parent_content, heading_path, child_anchor)`` where
+    ``parent_content`` is the verbatim Markdown of the heading section the top
+    match belongs to — the unit the editor rewrites in place — ``heading_path``
+    is that section's heading trail (e.g. ``"Security > Threats"``) used to
+    relocate the section even if ``parent_content`` drifted from the on-disk
+    text, and ``child_anchor`` is the specific matched passage. The anchor lets
+    the editor narrow the edit to the relevant paragraph when the parent section
+    is the whole document (heading-less files) instead of rewriting everything.
     Falls back to a shared notes file (empty section) when the workspace is empty
     or nothing relevant is found.
     """
@@ -263,8 +300,9 @@ def _locate_target(search_text: str) -> tuple[str, str, str]:
                 src,
                 (item.get("parent_content") or item.get("content") or ""),
                 (item.get("heading_path") or ""),
+                (item.get("content") or ""),
             )
-    return _DEFAULT_NOTES_SOURCE, "", ""
+    return _DEFAULT_NOTES_SOURCE, "", "", ""
 
 
 def _norm_heading(text: str) -> str:
@@ -324,6 +362,73 @@ def _find_section_span(current: str, heading_path: str) -> tuple[int, int] | Non
         if nxt_level <= level:
             end = nxt_start
             break
+    return start, end
+
+
+def _locate_line(current: str, line: str) -> int | None:
+    """Return the offset of ``line`` in ``current`` (exact, else whitespace-
+    normalized with the offset mapped back to the original text)."""
+    if line in current:
+        return current.index(line)
+    norm_line = re.sub(r"\s+", " ", line).strip()
+    if len(norm_line) < 12:
+        return None
+    norm_current = re.sub(r"\s+", " ", current)
+    idx = norm_current.find(norm_line)
+    if idx == -1:
+        return None
+    return _norm_to_orig_offset(current, idx)
+
+
+def _find_passage_around_anchor(current: str, anchor: str) -> tuple[int, int] | None:
+    """Locate the matched child passage in ``current`` and return the bounds of
+    the paragraph (blank-line delimited) containing it.
+
+    Used to narrow an edit to the relevant paragraph when the parent section is
+    the whole file (heading-less documents). ``anchor`` is the indexed child
+    ``content`` — for headed docs it is prefixed with the heading path, so we try
+    each of its lines (skipping headings / the heading-path prefix / short lines)
+    until one is found in the document.
+    """
+    if not anchor or not current:
+        return None
+    for line in anchor.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or len(stripped) < 20:
+            continue
+        pos = _locate_line(current, stripped)
+        if pos is None:
+            continue
+        para_start = current.rfind("\n\n", 0, pos)
+        para_start = 0 if para_start == -1 else para_start + 2
+        para_end = current.find("\n\n", pos)
+        para_end = len(current) if para_end == -1 else para_end
+        if para_end > para_start:
+            return para_start, para_end
+    return None
+
+
+def _find_section_by_normalized_match(current: str, section: str) -> tuple[int, int] | None:
+    """Locate ``section`` (an indexed parent_content) in ``current`` when the two
+    differ only by whitespace, returning the ``(start, end)`` offsets in the
+    ORIGINAL text so the section can be rewritten in place.
+
+    The indexed parent_content comes from MarkdownHeaderTextSplitter, which
+    collapses/normalizes whitespace, so a byte-exact ``in`` check misses even
+    though the section is clearly present. We normalize both sides, find the
+    span, then map the normalized offsets back onto the original string.
+    """
+    norm_section = re.sub(r"\s+", " ", section).strip()
+    if len(norm_section) < 12:
+        return None
+    norm_current = re.sub(r"\s+", " ", current)
+    idx = norm_current.find(norm_section)
+    if idx == -1:
+        return None
+    start = _norm_to_orig_offset(current, idx)
+    end = _norm_to_orig_offset(current, idx + len(norm_section))
+    if end <= start:
+        end = len(current)
     return start, end
 
 
@@ -592,6 +697,7 @@ def apply_pending_edit(edit: dict) -> dict:
 
     action_label = {
         "section_rewrite": "relevant section updated in place",
+        "passage_rewrite": "relevant passage updated in place",
         "new_section": "new section added to document",
         "append": "appended to document",
     }.get(edit.get("change_kind", ""), "updated")
