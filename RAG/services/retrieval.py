@@ -6,7 +6,6 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -17,14 +16,9 @@ from RAG.services.embeddings import create_embeddings
 DENSE_SEARCH_K = int(os.getenv("DENSE_SEARCH_K", "15"))
 BM25_SEARCH_K = int(os.getenv("BM25_SEARCH_K", "15"))
 FINAL_CONTEXT_K = 5
-# Cap how many merged candidates get reranked. The reranker (cross-encoder on
-# CPU) is the dominant latency cost — fewer pairs = much faster retrieval.
+# Cap how many merged candidates get reranked — fewer pairs = faster retrieval.
 RERANK_INPUT_K = int(os.getenv("RERANK_INPUT_K", "12"))
-# bge-reranker-base is ~2x faster than -large on CPU with similar ranking quality.
-RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-base")
-# Reranker provider: "vertex" = Vertex AI Ranking API (Discovery Engine);
-# "local" = the bge cross-encoder above (offline / no GCP).
-RERANKER_PROVIDER = os.getenv("RERANKER_PROVIDER", "local").strip().lower()
+# Vertex AI Ranking API (Discovery Engine).
 VERTEX_RANKER_MODEL = os.getenv("VERTEX_RANKER_MODEL", "semantic-ranker-default-004")
 # Candidates below this score are dropped after reranking to avoid irrelevant results.
 RERANK_SCORE_THRESHOLD = float(os.getenv("RERANK_SCORE_THRESHOLD", "0.05"))
@@ -140,10 +134,9 @@ _models_ready = False
 
 
 def warmup_models() -> None:
-    """Eagerly load embedding and reranker models at startup to avoid OOM spikes on first query."""
+    """Eagerly initialise the embedding client and BM25 indices at startup."""
     global _models_ready
-    _get_embeddings()   # load once; result is cached in _embeddings_model
-    _load_reranker()
+    _get_embeddings()   # validates GCP credentials + model availability early
     for channel in CHANNELS:
         get_retriever(channel)   # init corpus + BM25 per channel
     vector_store.get_pool()      # attempt shared Postgres connection
@@ -305,26 +298,10 @@ def rerank_candidates(query: str, candidates: list[RetrievalCandidate]) -> list[
     if not candidates:
         return candidates
 
-    if RERANKER_PROVIDER == "vertex":
-        scored = _vertex_rerank(query, candidates)
-        if scored is not None:
-            return scored
-        # fall through to the local reranker if the Vertex call failed
-
-    reranker = _load_reranker()
-    if reranker is None:
-        return sorted(candidates, key=lambda item: item.final_score, reverse=True)
-
-    try:
-        pairs = [(query, candidate.content) for candidate in candidates]
-        scores = reranker.predict(pairs)
-    except Exception as exc:
-        print(f"[Retrieval] Reranker skipped: {exc}")
-        return sorted(candidates, key=lambda item: item.final_score, reverse=True)
-
-    for candidate, score in zip(candidates, scores):
-        candidate.rerank_score = float(score)
-
+    scored = _vertex_rerank(query, candidates)
+    if scored is not None:
+        return scored
+    # Vertex call failed — fall back to fusion score ordering.
     return sorted(candidates, key=lambda item: item.final_score, reverse=True)
 
 
@@ -333,13 +310,15 @@ def _vertex_rerank(
 ) -> list[RetrievalCandidate] | None:
     """Rerank via the Vertex AI Ranking API (Discovery Engine rank service).
 
-    Returns the re-scored, re-sorted candidates, or None on failure so the caller
-    can fall back to the local cross-encoder.
+    Returns the re-scored candidates, or None on failure so the caller can
+    fall back to fusion score ordering.
     """
     try:
         from google.cloud import discoveryengine_v1 as discoveryengine
 
-        project = os.environ["GOOGLE_CLOUD_PROJECT"]
+        # Discovery Engine requires the numeric project number, not the string project ID.
+        # Set GOOGLE_CLOUD_PROJECT_NUMBER to the 12-digit number shown in Google Cloud Console.
+        project = os.getenv("GOOGLE_CLOUD_PROJECT_NUMBER") or os.environ["GOOGLE_CLOUD_PROJECT"]
         client = discoveryengine.RankServiceClient()
         ranking_config = client.ranking_config_path(
             project=project, location="global", ranking_config="default_ranking_config"
@@ -456,19 +435,6 @@ def _load_corpus(corpus_path: Path = CORPUS_PATH) -> list[RetrievalCandidate]:
             )
     return corpus
 
-
-@lru_cache(maxsize=1)
-def _load_reranker():
-    if os.getenv("RAG_ENABLE_RERANKER", "1") == "0":
-        return None
-
-    try:
-        from sentence_transformers import CrossEncoder
-
-        return CrossEncoder(RERANKER_MODEL_NAME)
-    except Exception as exc:
-        print(f"[Retrieval] Reranker unavailable: {exc}")
-        return None
 
 
 def _tokenize(text: str) -> list[str]:

@@ -2,10 +2,7 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_TORCH_BACKEND=cpu \
-    UV_LINK_MODE=copy \
-    HF_HOME=/app/.cache/huggingface \
-    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 

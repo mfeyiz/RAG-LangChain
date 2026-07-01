@@ -13,24 +13,17 @@ dependencies = [
     "langchain>=1.2.7",
     "langchain-community>=0.4.1",
     "langchain-google-genai>=4.2.0",
-    "langchain-huggingface>=1.2.0",
-    "langchain-nomic>=1.0.1",
-    "langchain-ollama>=1.0.1",
     "langchain-openai>=0.3.0",
     "langgraph>=0.4.0",
-    "nomic>=3.9.0",
-    "ollama>=0.6.1",
     "openai>=2.16.0",
     "pypdf>=6.6.2",
-    # Dense vector store: Postgres + pgvector (replaces Qdrant).
+    # Dense vector store: Postgres + pgvector.
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
     "pgvector>=0.3.6",
     "python-dotenv>=1.2.1",
     "ragas>=0.3.0",
     "requests>=2.32.5",
-    "torch>=2.0.0",
-    "sentence-transformers>=5.2.2",
     "sse-starlette>=2.0.0",
     "python-multipart>=0.0.9",
     "datasets>=3.0.0",
@@ -40,22 +33,20 @@ dependencies = [
     "markdown>=3.7",
     "pdfminer.six>=20240706",
     "weasyprint>=63.0",
-    # Multimodal ingestion: docling extracts figures and preserves heading
-    # structure; pillow handles the extracted image files.
-    "docling>=2.0.0",
+    # Multimodal ingestion: pillow handles image files; figure cropping via pymupdf.
+    # docling removed — DOC_PARSER=documentai + markitdown cover all conversion paths.
     "pillow>=10.0.0",
-    # Google Cloud retrieval stack (provider-agnostic; imported lazily, only when
-    # the matching env flag selects them):
+    # Google Cloud retrieval stack:
     #   DOC_PARSER=documentai       -> google-cloud-documentai (+ pymupdf crop)
-    #   EMBEDDING_PROVIDER=google   -> google-genai (already above), Gemini Embedding 2
+    #   EMBEDDING_PROVIDER=google   -> google-genai (above), Gemini Embedding 2
     #   RERANKER_PROVIDER=vertex    -> google-cloud-discoveryengine (Ranking API)
     "google-cloud-documentai>=2.30.0",
     "google-cloud-discoveryengine>=0.13.0",
     "pymupdf>=1.24.0",
-    # Code interpreter node + dynamic chart generation (Feature 4b/4c).
+    # Code interpreter node + dynamic chart generation.
     "pandas>=2.0.0",
     "matplotlib>=3.8.0",
-    # Git-backed workspace version control (Feature 2): @update → commit, restore.
+    # Git-backed workspace version control: @update → commit, restore.
     "GitPython>=3.1.0",
 ]
 
@@ -64,14 +55,3 @@ dev = [
     "flake8>=7.3.0",
     "pytest>=9.0.2",
 ]
-
-[tool.uv]
-torch-backend = "cpu"
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
