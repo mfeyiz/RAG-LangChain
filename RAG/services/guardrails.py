@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # ── 1. Query length limit ────────────────────────────────────────────────────
 MAX_QUERY_LENGTH = int(os.getenv("GUARDRAIL_MAX_QUERY_LENGTH", "1000"))

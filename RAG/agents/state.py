@@ -35,3 +35,15 @@ class AgentState(TypedDict):
     edit_target_file: str       # workspace markdown source the editor modified ("<stem>.md")
     edit_summary: str           # short human-readable summary of what changed
     regenerated_pdf: str        # source for the regenerated workspace PDF (download key)
+    # ── Fast-track routing ──
+    fast_track: bool            # supervisor classified as simple: bypass researcher & reviewer
+    # ── Diff Viewer / Human-in-the-loop @update ──
+    edit_preview: dict          # pending {source, before, after, diff, instruction} awaiting approval
+    edit_pending: bool          # editor produced a preview waiting for the user to approve/reject
+    needs_edit_approval: bool   # surface an approve/reject prompt to the UI
+    edit_token: str             # opaque key that /update/apply uses to look up a stashed edit
+    # ── Tabular / code interpreter ──
+    needs_calculation: bool     # question requires arithmetic over table data
+    calc_request: str           # the natural-language calculation request
+    calc_result: str            # the computed numeric/string result from code interpreter
+    table_data: list            # structured [{name, headers, rows}] tables relevant to the query

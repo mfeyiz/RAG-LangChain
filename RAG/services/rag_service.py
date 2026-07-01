@@ -16,13 +16,11 @@ from langchain_text_splitters import (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from RAG.services.embeddings import create_embeddings
-from RAG.services import paths
+from RAG.services import paths, vector_store
 from RAG.services.retrieval import (
     CHANNELS,
-    QDRANT_PATH,
     channel_collection,
     channel_corpus_path,
-    get_qdrant_client,
 )
 
 
@@ -37,61 +35,36 @@ _LOCK_KEY = "rag:index:lock"
 _LOCK_TTL = 900  # 15 min — upper bound for full indexing run
 
 
-def _collection_ready(client, collection_name: str) -> bool:
-    try:
-        if client and client.collection_exists(collection_name):
-            count = client.get_collection(collection_name).points_count
-            return bool(count and count > 0)
-    except Exception:
-        pass
-    return False
-
-
-def _stored_vector_dim(client, collection_name: str) -> int | None:
-    """Return the vector dimension stored in a Qdrant collection, or None if unknown."""
-    try:
-        info = client.get_collection(collection_name)
-        vc = info.config.params.vectors
-        if hasattr(vc, "size"):          # unnamed default vector
-            return vc.size
-        if isinstance(vc, dict) and vc:  # named vectors
-            return next(iter(vc.values())).size
-    except Exception:
-        pass
-    return None
+def _collection_ready(collection_name: str) -> bool:
+    return vector_store.channel_ready(collection_name)
 
 
 def ensure_index() -> None:
-    """Build the vector index for any channel whose collection is missing, empty, or stale.
+    """Build the vector index for any channel whose data is missing, empty, or stale.
 
-    Detects stale indexes (e.g. indexed with a wrong embedding model) by comparing
-    the stored vector dimension against the current embedding model output.
+    Stale indexes (e.g. indexed with a wrong embedding model) are detected inside
+    ``vector_store.ensure_schema``: it compares the table's embedding dimension
+    against the current model and drops/recreates the table on mismatch, so a
+    dimension change clears every channel and they get rebuilt here.
 
     Uses a Redis distributed lock so only one pod runs indexing when multiple
     replicas start simultaneously. The lock is released whether indexing
     succeeds or fails so other pods are never blocked permanently.
     """
-    client = get_qdrant_client(create=True)
-
     from RAG.services.retrieval import _get_embeddings
     expected_dim = len(_get_embeddings().embed_query("probe"))
+
+    # Provisions the table (dropping it first if the stored dimension is stale).
+    if not vector_store.ensure_schema(expected_dim):
+        print("[Index] Postgres unavailable — skipping vector indexing.")
+        return
 
     channels_to_build = []
     for channel in CHANNELS:
         collection = channel_collection(channel)
-        if _collection_ready(client, collection):
-            stored_dim = _stored_vector_dim(client, collection)
-            if stored_dim is not None and stored_dim != expected_dim:
-                print(f"[Index] {collection}: vector dim mismatch (stored={stored_dim}, expected={expected_dim}) — rebuilding.")
-                try:
-                    client.delete_collection(collection)
-                except Exception as exc:
-                    print(f"[Index] Could not delete stale collection {collection}: {exc}")
-                    continue
-                channels_to_build.append(channel)
-            else:
-                count = client.get_collection(collection).points_count
-                print(f"[Index] {collection} already has {count} points — skipping.")
+        if _collection_ready(collection):
+            count = vector_store.channel_count(collection)
+            print(f"[Index] {collection} already has {count} rows — skipping.")
         else:
             channels_to_build.append(channel)
 
@@ -114,7 +87,7 @@ def ensure_index() -> None:
         print("[Index] Another pod is indexing, waiting…")
         for _ in range(180):
             time.sleep(5)
-            if all(_collection_ready(client, channel_collection(ch)) for ch in channels_to_build):
+            if all(_collection_ready(channel_collection(ch)) for ch in channels_to_build):
                 print("[Index] Index is ready.")
                 return
         print("[Index] Timed out waiting for index — proceeding anyway.")
@@ -122,7 +95,7 @@ def ensure_index() -> None:
 
     try:
         for channel in channels_to_build:
-            if _collection_ready(client, channel_collection(channel)):
+            if _collection_ready(channel_collection(channel)):
                 continue
             print(f"[Index] Building vector index for channel '{channel}'…")
             create_channel_index(channel)
@@ -149,7 +122,7 @@ def create_channel_index(channel: str):
     documents = load_markdown_documents(_CHANNEL_MD_DIR[channel])
     chunks = semantic_chunk_documents(documents)
     write_corpus(chunks, channel)
-    write_qdrant_index(chunks, channel, embeddings=embeddings)
+    write_vector_index(chunks, channel, embeddings=embeddings)
     print(f"Indexed {len(chunks)} chunks into channel '{channel}'.")
 
 
@@ -201,15 +174,26 @@ def _section_images(text: str) -> list[str]:
     return seen
 
 
+def _parent_id(source: str, heading_path: str, ordinal: int) -> str:
+    """Stable id for a heading section (the 'parent' of its size-split pieces)."""
+    key = f"{source}|{heading_path}|{ordinal}"
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()
+
+
 def semantic_chunk_documents(documents: list[Document]) -> list[Document]:
-    """Heading-aware Markdown chunking.
+    """Heading-aware, parent-aware Markdown chunking.
 
     Stage 1 splits on the ``#``/``##``/``###`` heading tree so each chunk knows
-    which section it belongs to (captured in ``h1``/``h2``/``h3`` metadata).
+    which section it belongs to (captured in ``h1``/``h2``/``h3`` metadata). Each
+    such section is the *parent*: its full verbatim text is recorded on every
+    child piece as ``metadata['parent_content']`` (with a shared ``parent_id``)
+    so retrieval can expand a matched child back to its whole section, and the
+    editor can rewrite that section in place.
+
     Stage 2 bounds oversized sections with the character splitter. The heading
     path is prepended to every chunk's content so the embedding and BM25 index
     carry section context, and any image references in the section are recorded
-    in ``metadata['images']`` so retrieval can surface figures (text-anchored).
+    in ``metadata['images']`` so retrieval can surface figures.
     """
     header_splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=_HEADERS_TO_SPLIT_ON,
@@ -224,13 +208,14 @@ def semantic_chunk_documents(documents: list[Document]) -> list[Document]:
     chunks: list[Document] = []
     for doc in documents:
         base_metadata = dict(doc.metadata)
+        source = base_metadata.get("source", "")
         sections = header_splitter.split_text(doc.page_content)
         # Fallback: a document with no Markdown headings yields a single section.
         if not sections:
             sections = [Document(page_content=doc.page_content, metadata={})]
 
         index = 0
-        for section in sections:
+        for ordinal, section in enumerate(sections):
             heading_meta = {
                 level: section.metadata[level]
                 for _, level in _HEADERS_TO_SPLIT_ON
@@ -238,6 +223,10 @@ def semantic_chunk_documents(documents: list[Document]) -> list[Document]:
             }
             heading_path = _heading_path(heading_meta)
             images = _section_images(section.page_content)
+            # The parent is the section's full, verbatim markdown — a byte-for-byte
+            # slice of the source file, so the editor can locate and replace it.
+            parent_content = section.page_content
+            parent_id = _parent_id(source, heading_path, ordinal)
 
             for piece in size_splitter.split_text(section.page_content):
                 content = f"{heading_path}\n\n{piece}" if heading_path else piece
@@ -245,6 +234,8 @@ def semantic_chunk_documents(documents: list[Document]) -> list[Document]:
                 if heading_path:
                     metadata["heading_path"] = heading_path
                 metadata["images"] = images
+                metadata["parent_id"] = parent_id
+                metadata["parent_content"] = parent_content
                 metadata["chunk_index"] = index
                 metadata["chunking"] = "heading-aware-markdown"
                 metadata["doc_id"] = _stable_doc_id(content, metadata)
@@ -274,60 +265,41 @@ def write_corpus(chunks: list[Document], channel: str):
     print(f"Corpus written: {corpus_path}")
 
 
-def write_qdrant_index(chunks: list[Document], channel: str, embeddings=None):
-    try:
-        from qdrant_client.models import Distance, PointStruct, VectorParams
-    except Exception as exc:
-        print(f"Qdrant dependency unavailable; corpus-only index created. {exc}")
-        return
-
+def write_vector_index(chunks: list[Document], channel: str, embeddings=None):
     collection = channel_collection(channel)
-    client = get_qdrant_client(create=True)
-    if client is None:
-        print(f"Qdrant client unavailable; skipping {collection}.")
+    if vector_store.get_pool() is None:
+        print(f"Postgres unavailable; corpus-only index created ({collection}).")
         return
 
     if not chunks:
-        # Drop any stale collection so an empty channel is genuinely empty.
-        if client.collection_exists(collection):
-            client.delete_collection(collection)
+        # Clear the channel so an empty channel is genuinely empty.
+        vector_store.replace_channel(collection, [])
         return
 
     if embeddings is None:
         embeddings = create_embeddings()
 
     texts = [chunk.page_content for chunk in chunks]
-    print(f"[Index] Embedding {len(texts)} chunks ({collection}) with {embeddings.model_name}…")
+    model_label = getattr(embeddings, "model_name", None) or getattr(embeddings, "model", "?")
+    print(f"[Index] Embedding {len(texts)} chunks ({collection}) with {model_label}…")
     vectors = embeddings.embed_documents(texts)
     print(f"[Index] Embedding complete — {len(vectors)} vectors generated.")
     if not vectors:
         print("No vectors created.")
         return
 
-    vector_size = len(vectors[0])
-    if client.collection_exists(collection):
-        client.delete_collection(collection)
-    client.create_collection(
-        collection_name=collection,
-        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
-    )
-
-    points = [
-        PointStruct(
-            id=index,
-            vector=vector,
-            payload={
-                "doc_id": chunk.metadata["doc_id"],
-                "content": chunk.page_content,
-                "metadata": chunk.metadata,
-            },
-        )
-        for index, (chunk, vector) in enumerate(zip(chunks, vectors))
+    vector_store.ensure_schema(len(vectors[0]))
+    rows = [
+        {
+            "doc_id": chunk.metadata["doc_id"],
+            "content": chunk.page_content,
+            "metadata": chunk.metadata,
+            "embedding": vector,
+        }
+        for chunk, vector in zip(chunks, vectors)
     ]
-    for start in range(0, len(points), 64):
-        client.upsert(collection_name=collection, points=points[start: start + 64])
-
-    print(f"Qdrant collection written: {QDRANT_PATH} / {collection}")
+    vector_store.replace_channel(collection, rows)
+    print(f"pgvector channel written: {collection} ({len(rows)} rows)")
 
 
 def _stable_doc_id(content: str, metadata: dict) -> str:

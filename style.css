@@ -203,6 +203,13 @@ h1, h2 {
     align-items: start;
 }
 
+/* The two top-level views (.workspace / .library-view) set display:grid, which
+   would otherwise win over the `hidden` attribute's UA display:none (equal
+   specificity, later rule wins) — leaving both stacked and the Sohbet/Kitaplık
+   switch visually inert. Force hidden to win so they behave as real tabs. */
+.workspace[hidden],
+.library-view[hidden] { display: none !important; }
+
 /* ── Chat panel ──────────────────────────────────────────────── */
 .chat-panel {
     height: calc(100vh - 64px - 52px);
@@ -440,6 +447,18 @@ h1, h2 {
     background: var(--surface);
 }
 .context-images a { display: inline-flex; }
+
+/* Figures the model embedded inline in its answer (![](/images/...)). */
+.message-content .answer-image {
+    display: block;
+    max-width: 100%;
+    max-height: 360px;
+    margin: 12px 0;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    object-fit: contain;
+    background: var(--surface);
+}
 
 .composer:focus-within {
     border-color: var(--accent-line);
@@ -989,6 +1008,55 @@ h1, h2 {
     width: min(460px, calc(100vw - 40px));
 }
 
+.modal-box-narrow { width: min(380px, calc(100vw - 40px)); }
+
+.auth-hint {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 16px;
+}
+
+.auth-form { display: flex; flex-direction: column; gap: 8px; }
+
+.auth-form label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+}
+
+.auth-form input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--raised);
+    color: var(--text, inherit);
+    font-size: 14px;
+}
+
+.auth-form input:focus { outline: 2px solid var(--accent, #6366f1); outline-offset: 1px; }
+
+.auth-error {
+    color: #ef4444;
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+.primary-button {
+    margin-top: 14px;
+    padding: 11px 14px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent, #6366f1);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 150ms;
+}
+
+.primary-button:hover { opacity: 0.92; }
+
 .modal-header {
     display: flex;
     align-items: center;
@@ -1362,6 +1430,127 @@ h1, h2 {
     color: var(--accent-hover);
 }
 .edit-result-hint .material-symbols-outlined { font-size: 15px; }
+
+/* ── Diff viewer / edit preview (human-in-the-loop @update) ──── */
+.edit-preview {
+    margin-top: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--accent-line);
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-sm);
+}
+.edit-preview-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+}
+.edit-preview-head .material-symbols-outlined { font-size: 20px; color: var(--accent-hover); }
+.edit-preview-title { font-weight: 600; font-size: 14px; }
+.edit-preview-file { margin-left: auto; font-size: 12px; color: var(--muted); }
+.edit-preview-instruction { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.edit-preview-empty { font-size: 13px; color: var(--muted); }
+.diff-viewer {
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px;
+    max-height: 360px; overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev, var(--bg));
+}
+.diff-viewer-line {
+    display: flex; align-items: flex-start;
+    white-space: pre; line-height: 1.55;
+}
+.diff-gutter {
+    width: 22px; flex: 0 0 22px;
+    text-align: center; user-select: none;
+    color: var(--muted);
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+}
+.diff-content { padding: 0 8px; overflow: hidden; }
+.diff-added   { background: rgba(46,160,67,.12); }
+.diff-added   .diff-gutter { background: rgba(46,160,67,.18); color: #2ea043; }
+.diff-removed { background: rgba(248,81,73,.12); }
+.diff-removed .diff-gutter { background: rgba(248,81,73,.18); color: #e5534b; }
+.diff-same    { color: var(--muted); }
+.diff-ellipsis{ color: var(--muted); justify-content: center; font-style: italic; }
+.diff-viewer.diff-applied { opacity: .7; }
+.edit-preview-meta { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.edit-preview-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.edit-preview-status {
+    margin-top: 10px; font-size: 13px; display: flex; align-items: center; gap: 6px;
+}
+.edit-preview-status.is-ok { color: #2ea043; }
+.edit-preview-status.is-error { color: #e5534b; }
+.edit-preview-status.is-pending { color: var(--muted); }
+.edit-preview-status.is-rejected { color: var(--muted); }
+.edit-preview-status .material-symbols-outlined { font-size: 18px; }
+
+/* ── Citation link + PDF highlight panel ─────────────────────── */
+.cite-link { color: var(--accent); font-weight: 600; text-decoration: none; padding: 0 2px; cursor: pointer; }
+.cite-link:hover { text-decoration: underline; }
+.cite-doc {
+    border-radius: 4px;
+    background: var(--accent-soft);
+    border-bottom: 1px dashed var(--accent);
+}
+/* Docked, full-height viewer on the right. The workspace makes room for it
+   (see body.cite-open below) instead of being overlaid. */
+.cite-panel {
+    --cite-width: clamp(400px, 42vw, 640px);
+    position: fixed; top: 56px; right: 0; bottom: 0; width: var(--cite-width);
+    background: #2b2d30; border-left: 1px solid var(--line);
+    box-shadow: -10px 0 32px rgba(0, 0, 0, 0.16);
+    z-index: 60; display: none; flex-direction: column; overflow: hidden;
+}
+.cite-panel.is-open { display: flex; }
+.cite-panel-head {
+    display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+    border-bottom: 1px solid var(--line); background: var(--surface); flex: 0 0 auto;
+}
+.cite-panel-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
+.cite-panel-title span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cite-panel-title .material-symbols-outlined { font-size: 18px; color: var(--accent-hover); }
+.cite-panel-nav { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.cite-panel-nav button { background: none; border: none; cursor: pointer; padding: 2px; color: var(--muted); display: flex; }
+.cite-panel-nav button:hover { color: var(--accent-hover); }
+.cite-panel-nav .material-symbols-outlined { font-size: 20px; }
+.cite-panel-loading { padding: 16px; color: #cfd2d6; font-size: 13px; text-align: center; }
+
+/* Scroll the WHOLE document; each page is centered on the dark backdrop with
+   breathing room and a soft shadow. */
+.cite-panel-body {
+    flex: 1; min-height: 0; overflow-y: auto; background: #3a3d41;
+    padding: 20px 0 28px;
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+    scroll-behavior: smooth;
+}
+.cite-page { width: min(90%, 760px); display: flex; }
+.cite-page-img {
+    width: 100%; height: auto; display: block; border-radius: 4px;
+    background: #fff; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+}
+.cite-panel-error { display: flex; align-items: center; gap: 8px; padding: 20px; color: #ff8a80; font-size: 13px; }
+.cite-panel-error .material-symbols-outlined { font-size: 22px; }
+
+/* When the viewer is open, push the workspace left and shrink it so chat + rail
+   stay fully visible beside the panel instead of being covered. */
+.workspace { transition: margin-right 240ms ease, max-width 240ms ease; }
+body.cite-open .workspace {
+    max-width: none;
+    width: auto;
+    margin: 0 0 0 0;
+    margin-right: clamp(400px, 42vw, 640px);
+    padding-left: 24px;
+    grid-template-columns: minmax(0, 1fr) 332px;
+    gap: 18px;
+}
+
+@media (max-width: 1100px) {
+    .cite-panel { --cite-width: 100%; width: 100%; }
+    body.cite-open .workspace { margin-right: 0; grid-template-columns: 1fr; }
+}
 
 /* ── Top tabs (Sohbet / Kitaplık) ────────────────────────────── */
 .top-tabs { display: flex; gap: 4px; background: var(--accent-soft); padding: 4px; border-radius: 999px; }

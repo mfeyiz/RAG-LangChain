@@ -64,6 +64,33 @@ const AGENT_MESSAGES = {
     editor:     "Bilgi güncelleniyor ve yeniden indeksleniyor",
 };
 
+/* ── Auth state ──────────────────────────────────────────────── */
+const AUTH_LOGIN_URL = "/auth/login";
+let authToken = localStorage.getItem("rag_auth_token") || "";
+let authUser  = localStorage.getItem("rag_auth_user")  || "";
+
+function isAuthenticated() { return Boolean(authToken); }
+
+/* Merge the bearer token into request headers when logged in. */
+function authHeaders(extra = {}) {
+    const headers = { ...extra };
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    return headers;
+}
+
+function setAuth(token, username) {
+    authToken = token || "";
+    authUser  = username || "";
+    if (authToken) {
+        localStorage.setItem("rag_auth_token", authToken);
+        localStorage.setItem("rag_auth_user", authUser);
+    } else {
+        localStorage.removeItem("rag_auth_token");
+        localStorage.removeItem("rag_auth_user");
+    }
+    renderAuthState();
+}
+
 /* ── Session state ───────────────────────────────────────────── */
 let currentSessionId = localStorage.getItem("rag_session_id") || generateUUID();
 localStorage.setItem("rag_session_id", currentSessionId);
@@ -151,13 +178,23 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
     let completed         = false;
     let webSources        = null;   // web result list, used to linkify citations
     let awaitingApproval  = false;  // showing the "search the web?" prompt
+    let awaitingEditApproval = false; // showing @update diff awaiting Approve/Reject
+    let searchMeta        = null;  // search_results for the current answer (citation panel)
 
     try {
         const response = await fetch(API_URL, {
             method:  "POST",
-            headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+            headers: authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
             body:    JSON.stringify({ query: message, session_id: currentSessionId, allow_web: allowWeb, images: outgoingImages }),
         });
+
+        if (response.status === 403) {
+            // @update attempted without auth — prompt the user to sign in.
+            typingIndicator.remove();
+            let detail = "@update için giriş yapmalısınız.";
+            try { const p = await response.json(); if (p?.error) detail = p.error; } catch {}
+            throw new Error(detail, { cause: "auth" });
+        }
 
         if (!response.ok || !response.body) {
             let detail = "";
@@ -185,6 +222,8 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
             if (event.event === "search_results") {
                 const results = safeJson(event.data) || [];
                 showSearchResults(results);
+                searchMeta = results;
+                botMessageDiv.__searchMeta = results;
                 const webResults = results.filter((r) => r.origin === "web");
                 if (webResults.length) {
                     webSources = webResults;
@@ -218,6 +257,16 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
                 }
             }
 
+            /* editor DIFF PREVIEW awaiting human approval (@update HITL) */
+            if (event.event === "edit_preview") {
+                const payload = safeJson(event.data);
+                if (payload) {
+                    streamingStarted = true;
+                    awaitingEditApproval = true;
+                    showEditPreview(botMessageDiv, payload);
+                }
+            }
+
             /* streaming tokens from writer */
             if (event.event === "token") {
                 streamingStarted = true;
@@ -232,7 +281,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
                 streamingStarted = true;
                 contentDiv.classList.remove("is-streaming");
                 fullText = event.data;
-                renderAnswer(contentDiv, fullText, webSources);
+                renderAnswer(contentDiv, fullText, webSources, searchMeta);
                 scrollToBottom();
 
                 if (!feedbackAdded) {
@@ -257,7 +306,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
             }
         }
 
-        if (!fullText.trim() && !awaitingApproval) {
+        if (!fullText.trim() && !awaitingApproval && !awaitingEditApproval) {
             contentDiv.textContent = "Akış tamamlandı fakat yanıt metni üretilmedi.";
         }
         if (!completed) markComplete();
@@ -270,6 +319,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
         }
         markError(error.message);
         console.error(error);
+        if (error.cause === "auth") openAuthModal();
     } finally {
         stopElapsedTimer();
         setControlsDisabled(false);
@@ -341,6 +391,131 @@ async function openUpdatedDoc(source) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   EDIT PREVIEW (diff viewer) + Human-in-the-loop approval (@update)
+═══════════════════════════════════════════════════════════════ */
+function showEditPreview(botMessageDiv, payload) {
+    const card = document.createElement("div");
+    card.className = "edit-preview";
+
+    const header = document.createElement("div");
+    header.className = "edit-preview-head";
+    header.innerHTML = `
+        <span class="material-symbols-outlined">rule</span>
+        <span class="edit-preview-title">Değişiklik önizleme</span>
+        <span class="edit-preview-file">${escapeHtml(payload.file || "")}</span>`;
+    card.appendChild(header);
+
+    if (payload.instruction) {
+        const instr = document.createElement("p");
+        instr.className = "edit-preview-instruction";
+        instr.innerHTML = `<strong>Talimat:</strong> ${escapeHtml(payload.instruction)}`;
+        card.appendChild(instr);
+    }
+
+    const diff = payload.diff || [];
+    if (!diff.length) {
+        const note = document.createElement("p");
+        note.className = "edit-preview-empty";
+        note.textContent = "Değişiklik tespit edilmedi.";
+        card.appendChild(note);
+        botMessageDiv.appendChild(card);
+        return;
+    }
+
+    const viewer = document.createElement("div");
+    viewer.className = "diff-viewer";
+    diff.forEach((row) => {
+        const line = document.createElement("div");
+        const type = row.type || "same";
+        line.className = `diff-viewer-line diff-${type}`;
+        const sign = type === "added" ? "+" : type === "removed" ? "-" : type === "ellipsis" ? "…" : " ";
+        const txt = type === "removed" ? row.before : type === "added" ? row.after : row.after ?? row.before;
+        if (type === "ellipsis") {
+            line.textContent = "…";
+        } else {
+            line.innerHTML = `<span class="diff-gutter">${sign}</span><span class="diff-content">${escapeHtml(txt ?? "") || "&nbsp;"}</span>`;
+        }
+        viewer.appendChild(line);
+    });
+    card.appendChild(viewer);
+
+    const meta = document.createElement("div");
+    meta.className = "edit-preview-meta";
+    const added = diff.filter((r) => r.type === "added").length;
+    const removed = diff.filter((r) => r.type === "removed").length;
+    meta.textContent = `+${added} satır · −${removed} satır`;
+    card.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "edit-preview-actions";
+
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "primary-button edit-approve";
+    approveBtn.innerHTML = `<span class="material-symbols-outlined">check</span> Onayla`;
+    approveBtn.disabled = false;
+
+    const rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "ghost-button edit-reject";
+    rejectBtn.innerHTML = `<span class="material-symbols-outlined">close</span> Reddet`;
+
+    actions.appendChild(rejectBtn);
+    actions.appendChild(approveBtn);
+    card.appendChild(actions);
+
+    const status = document.createElement("div");
+    status.className = "edit-preview-status";
+    card.appendChild(status);
+
+    botMessageDiv.appendChild(card);
+    logEvent("editor", `Değişiklik önizlemesi hazır — onay bekleniyor (${payload.file || ""}).`);
+    scrollToBottom();
+
+    async function approve() {
+        approveBtn.disabled = true; rejectBtn.disabled = true;
+        status.textContent = "Uygulanıyor…"; status.className = "edit-preview-status is-pending";
+        try {
+            const res = await fetch("/update/apply", {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ token: payload.token }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Onay başarısız.");
+            status.innerHTML = `<span class="material-symbols-outlined">check_circle</span> ${escapeHtml(data.reply || "Değişiklik uygulandı.")}`;
+            status.className = "edit-preview-status is-ok";
+            card.querySelector(".diff-viewer").classList.add("diff-applied");
+            card.querySelector(".edit-preview-actions").remove();
+            addMessage(data.reply, "assistant");
+            loadLibrary();
+        } catch (err) {
+            status.textContent = `Hata: ${err.message}`;
+            status.className = "edit-preview-status is-error";
+            approveBtn.disabled = false; rejectBtn.disabled = false;
+        }
+    }
+
+    async function reject() {
+        approveBtn.disabled = true; rejectBtn.disabled = true;
+        try {
+            await fetch("/update/reject", {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ token: payload.token }),
+            });
+        } catch { /* fire-and-forget */ }
+        status.innerHTML = `<span class="material-symbols-outlined">cancel</span> Değişiklik reddedildi — belgeye işlenmedi.`;
+        status.className = "edit-preview-status is-rejected";
+        card.querySelector(".edit-preview-actions").remove();
+        logEvent("editor", "Değişiklik kullanıcı tarafından reddedildi.");
+    }
+
+    approveBtn.addEventListener("click", approve);
+    rejectBtn.addEventListener("click", reject);
+}
+
+/* ══════════════════════════════════════════════════════════════
    FEEDBACK
 ═══════════════════════════════════════════════════════════════ */
 function addFeedbackRow(botMessageDiv, query) {
@@ -363,7 +538,7 @@ function addFeedbackRow(botMessageDiv, query) {
         try {
             await fetch(FEEDBACK_URL, {
                 method:  "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: authHeaders({ "Content-Type": "application/json" }),
                 body:    JSON.stringify({
                     session_id: currentSessionId,
                     trace_id:   currentTraceId,
@@ -404,7 +579,7 @@ function addFeedbackRow(botMessageDiv, query) {
         try {
             await fetch(`${FEEDBACK_URL}/comment`, {
                 method:  "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: authHeaders({ "Content-Type": "application/json" }),
                 body:    JSON.stringify({
                     session_id: currentSessionId,
                     trace_id:   currentTraceId,
@@ -561,6 +736,83 @@ uploadButton.addEventListener("click", () => { uploadModal.hidden = false; clear
 uploadModalClose.addEventListener("click", () => { uploadModal.hidden = true; clearUploadStatus(); });
 uploadModal.addEventListener("click", (e) => { if (e.target === uploadModal) { uploadModal.hidden = true; clearUploadStatus(); } });
 
+
+/* ══════════════════════════════════════════════════════════════
+   AUTHENTICATION (login modal + token state)
+═══════════════════════════════════════════════════════════════ */
+const authButton      = document.getElementById("authButton");
+const authButtonLabel = document.getElementById("authButtonLabel");
+const authModal       = document.getElementById("authModal");
+const authModalClose  = document.getElementById("authModalClose");
+const authForm        = document.getElementById("authForm");
+const authUsername    = document.getElementById("authUsername");
+const authPassword    = document.getElementById("authPassword");
+const authError       = document.getElementById("authError");
+
+function renderAuthState() {
+    if (!authButtonLabel) return;
+    authButtonLabel.textContent = isAuthenticated() ? (authUser || "Çıkış yap") : "Giriş yap";
+    if (authButton) authButton.title = isAuthenticated()
+        ? `${authUser} olarak giriş yapıldı — çıkış için tıklayın`
+        : "Giriş yap";
+}
+
+function openAuthModal() {
+    if (!authModal) return;
+    authError.hidden = true;
+    authForm.reset();
+    authModal.hidden = false;
+    authUsername.focus();
+}
+
+function closeAuthModal() { if (authModal) authModal.hidden = true; }
+
+if (authButton) {
+    authButton.addEventListener("click", () => {
+        if (isAuthenticated()) {
+            // Toggle to logout when already signed in.
+            setAuth("", "");
+            logEvent("auth", "Oturum kapatıldı.");
+        } else {
+            openAuthModal();
+        }
+    });
+}
+if (authModalClose) authModalClose.addEventListener("click", closeAuthModal);
+if (authModal) authModal.addEventListener("click", (e) => { if (e.target === authModal) closeAuthModal(); });
+
+if (authForm) {
+    authForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        authError.hidden = true;
+        const username = authUsername.value.trim();
+        const password = authPassword.value;
+        if (!username || !password) return;
+
+        try {
+            const res = await fetch(AUTH_LOGIN_URL, {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({ username, password }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                authError.textContent = data.error || "Giriş başarısız oldu.";
+                authError.hidden = false;
+                return;
+            }
+            setAuth(data.token, data.username || username);
+            closeAuthModal();
+            logEvent("auth", `${data.username || username} olarak giriş yapıldı.`);
+        } catch (err) {
+            authError.textContent = "Sunucuya ulaşılamadı.";
+            authError.hidden = false;
+        }
+    });
+}
+
+renderAuthState();
+
 tabChat.addEventListener("click", () => switchTab("chat"));
 tabLibrary.addEventListener("click", () => switchTab("library"));
 libraryViewTabs.addEventListener("click", (e) => {
@@ -598,7 +850,7 @@ async function uploadFile(file) {
     formData.append("file", file);
 
     try {
-        const res = await fetch(UPLOAD_URL, { method: "POST", body: formData });
+        const res = await fetch(UPLOAD_URL, { method: "POST", headers: authHeaders(), body: formData });
         const data = await res.json();
 
         if (!res.ok) {
@@ -637,7 +889,7 @@ async function loadDocumentList() {
     docList.innerHTML = "";
 
     try {
-        const res  = await fetch(ADMIN_DOCS_URL);
+        const res  = await fetch(ADMIN_DOCS_URL, { headers: authHeaders() });
         const data = await res.json();
         const docs = data.documents || [];
 
@@ -685,7 +937,7 @@ async function deleteDocument(source, rowEl) {
 
     rowEl.classList.add("is-deleting");
     try {
-        const res  = await fetch(`${ADMIN_DOCS_URL}/${encodeURIComponent(source)}`, { method: "DELETE" });
+        const res  = await fetch(`${ADMIN_DOCS_URL}/${encodeURIComponent(source)}`, { method: "DELETE", headers: authHeaders() });
         const data = await res.json();
         if (!res.ok) {
             alert(data.error || "Silme başarısız oldu.");
@@ -727,7 +979,7 @@ function switchTab(tab) {
 
 async function loadLibrary() {
     try {
-        const res  = await fetch(`${ADMIN_DOCS_URL}?channel=workspace`);
+        const res  = await fetch(`${ADMIN_DOCS_URL}?channel=workspace`, { headers: authHeaders() });
         const data = await res.json();
         const docs = data.documents || [];
 
@@ -842,6 +1094,9 @@ function renderMarkdown(md) {
     const closeList = () => { if (listType) { html += `</${listType}>`; listType = null; } };
     const inline = (t) => escapeHtml(t)
         .replace(/`([^`]+)`/g, "<code>$1</code>")
+        // Inline figures the backend served — restricted to same-origin /images/
+        // URLs so answers can't be coaxed into loading arbitrary remote content.
+        .replace(/!\[([^\]]*)\]\((\/images\/[^)\s]+)\)/g, '<img src="$2" alt="$1" loading="lazy" class="answer-image">')
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
         .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -1093,12 +1348,214 @@ function showSearchResults(results) {
 
 // Render the answer text. When it was sourced from the web, turn [n] citation
 // tags into blue links pointing at the matching web source.
-function renderAnswer(contentDiv, text, webSources) {
+function renderAnswer(contentDiv, text, webSources, searchMeta) {
     if (webSources && webSources.length) {
         contentDiv.innerHTML = linkifyCitations(text, webSources);
-    } else {
-        contentDiv.textContent = text;
+        return;
     }
+    // Render the answer as Markdown so structure (lists/headings/tables) and
+    // inline figures (![](/images/...)) show up in the chat.
+    contentDiv.innerHTML = renderMarkdown(text);
+    // Document-grounded citations [1],[2] → clickable, opens a panel showing
+    // the original PDF page with the cited text highlighted (fosforlu kalem).
+    if (searchMeta && searchMeta.length) {
+        linkifyDocCitations(contentDiv, searchMeta);
+    }
+}
+
+/* For document-grounded answers, [n] citations map to the search_metadata
+   entries. Clicking one opens a side panel with the original PDF page rendered
+   to a PNG and the cited phrase highlighted in yellow. */
+function linkifyDocCitations(contentDiv, sources) {
+    const walker = document.createTreeWalker(contentDiv, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode())) {
+        if (/\[\d+\]/.test(node.nodeValue)) textNodes.push(node);
+    }
+    const re = /\[(\d+)\]/g;
+    textNodes.forEach((tn) => {
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        const val = tn.nodeValue;
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(val))) {
+            const n = parseInt(m[1], 10);
+            const src = sources[n - 1];
+            if (last < m.index) frag.appendChild(document.createTextNode(val.slice(last, m.index)));
+            if (src) {
+                const a = document.createElement("a");
+                a.className = "cite-link cite-doc";
+                a.textContent = `[${n}]`;
+                a.title = src.title || src.source || "Atıf";
+                a.href = "#";
+                a.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    openCitationPanel(src, sources);
+                });
+                frag.appendChild(a);
+            } else {
+                frag.appendChild(document.createTextNode(m[0]));
+            }
+            last = m.index + m[0].length;
+        }
+        if (last < val.length) frag.appendChild(document.createTextNode(val.slice(last)));
+        tn.parentNode.replaceChild(frag, tn);
+    });
+}
+
+/* ── Citation panel: original PDF page + highlighted snippet ────── */
+let citePanel = null;
+
+function ensureCitePanel() {
+    if (citePanel) return citePanel;
+    citePanel = document.createElement("div");
+    citePanel.className = "cite-panel";
+    citePanel.innerHTML = `
+        <div class="cite-panel-head">
+            <div class="cite-panel-title"><span class="material-symbols-outlined">menu_book</span> <span id="citePanelTitleText">Atıf</span></div>
+            <div class="cite-panel-nav">
+                <button id="citePrev" type="button" title="Önceki sayfa"><span class="material-symbols-outlined">chevron_left</span></button>
+                <span id="citePageLabel">—</span>
+                <button id="citeNext" type="button" title="Sonraki sayfa"><span class="material-symbols-outlined">chevron_right</span></button>
+            </div>
+            <button id="citePanelClose" type="button" class="ghost-button" title="Kapat"><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <div class="cite-panel-loading">Yükleniyor…</div>
+        <div class="cite-panel-body"></div>`;
+    document.body.appendChild(citePanel);
+    citePanel.querySelector("#citePanelClose").addEventListener("click", closeCitePanel);
+    citePanel.querySelector("#citePrev").addEventListener("click", () => citeNav(-1));
+    citePanel.querySelector("#citeNext").addEventListener("click", () => citeNav(1));
+    citePanel.addEventListener("click", (e) => { if (e.target === citePanel) closeCitePanel(); });
+    return citePanel;
+}
+
+let citeState = null; // {source, totalPages, currentPage}
+
+// Open the viewer for a clicked citation. Renders the WHOLE original PDF with
+// every retrieved chunk of that source highlighted, scrolls to the clicked
+// page, and docks the panel so the workspace reflows beside it.
+async function openCitationPanel(src, sources = []) {
+    const panel = ensureCitePanel();
+    panel.classList.add("is-open");
+    document.body.classList.add("cite-open");
+    const body = panel.querySelector(".cite-panel-body");
+    const loading = panel.querySelector(".cite-panel-loading");
+    body.innerHTML = "";
+    body.onscroll = null;
+    loading.style.display = "block";
+    panel.querySelector("#citePanelTitleText").textContent = src.source || src.title || "Atıf";
+    panel.querySelector("#citePageLabel").textContent = "…";
+
+    const source = src.source || "";
+    const focusSnippet = src.content || src.snippet || "";
+    // Every retrieved chunk that belongs to this same source document.
+    const snippets = (sources || [])
+        .filter((s) => (s.source || "") === source)
+        .map((s) => s.content || s.snippet || "")
+        .filter(Boolean);
+    if (!snippets.length && focusSnippet) snippets.push(focusSnippet);
+
+    citeState = { source, totalPages: null, currentPage: 0 };
+
+    const data = await fetchCiteDoc(source, snippets, focusSnippet);
+    loading.style.display = "none";
+    if (data.error || !Array.isArray(data.pages) || data.pages.length === 0) {
+        const msg = data.error || "Atıf görüntüsü yüklenemedi.";
+        body.innerHTML = `<div class="cite-panel-error"><span class="material-symbols-outlined">error</span> ${escapeHtml(msg)}</div>`;
+        citeState = null;
+        return;
+    }
+    citeState.totalPages = data.total_pages;
+    renderCiteDoc(data);
+}
+
+async function fetchCiteDoc(source, snippets, focusSnippet) {
+    try {
+        const res = await fetch("/cite/doc", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ source, snippets, focus_snippet: focusSnippet }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            return { error: data.error || "Atıf görüntüsü oluşturulamadı." };
+        }
+        return data;
+    } catch (e) {
+        return { error: "Sunucuya ulaşılamadı." };
+    }
+}
+
+function renderCiteDoc(data) {
+    const panel = ensureCitePanel();
+    const body = panel.querySelector(".cite-panel-body");
+    body.innerHTML = "";
+
+    (data.pages || []).forEach((p) => {
+        const fig = document.createElement("div");
+        fig.className = "cite-page";
+        fig.dataset.page = p.page;
+        const img = document.createElement("img");
+        img.className = "cite-page-img";
+        img.src = p.image_url;
+        img.alt = `Sayfa ${p.page}`;
+        img.loading = "lazy";
+        fig.appendChild(img);
+        body.appendChild(fig);
+    });
+
+    const focusIdx = Math.max(0, Math.min(data.focus_page_index ?? 0, (data.total_pages ?? 1) - 1));
+    // Wait for the focus page image to lay out, then jump to it.
+    const focusEl = body.querySelectorAll(".cite-page")[focusIdx];
+    const jump = () => scrollCiteToPage(focusIdx);
+    const focusImg = focusEl && focusEl.querySelector("img");
+    if (focusImg && !focusImg.complete) {
+        focusImg.addEventListener("load", jump, { once: true });
+        focusImg.addEventListener("error", jump, { once: true });
+    } else {
+        requestAnimationFrame(jump);
+    }
+    setupCiteScrollSpy();
+    updateCitePageLabel(focusIdx);
+}
+
+function setupCiteScrollSpy() {
+    const body = citePanel.querySelector(".cite-panel-body");
+    body.onscroll = () => {
+        const pages = [...body.querySelectorAll(".cite-page")];
+        const threshold = body.scrollTop + body.clientHeight * 0.35;
+        let cur = 0;
+        pages.forEach((p, i) => { if (p.offsetTop <= threshold) cur = i; });
+        updateCitePageLabel(cur);
+    };
+}
+
+function scrollCiteToPage(index) {
+    const body = citePanel.querySelector(".cite-panel-body");
+    const el = body.querySelectorAll(".cite-page")[index];
+    if (el) body.scrollTo({ top: Math.max(0, el.offsetTop - 16), behavior: "auto" });
+    updateCitePageLabel(index);
+}
+
+function updateCitePageLabel(index) {
+    if (!citeState) return;
+    citeState.currentPage = index;
+    citePanel.querySelector("#citePageLabel").textContent =
+        citeState.totalPages ? `${index + 1} / ${citeState.totalPages}` : `${index + 1}`;
+}
+
+function citeNav(delta) {
+    if (!citeState) return;
+    const next = Math.max(0, Math.min((citeState.currentPage ?? 0) + delta, (citeState.totalPages ?? 1) - 1));
+    scrollCiteToPage(next);
+}
+
+function closeCitePanel() {
+    if (citePanel) citePanel.classList.remove("is-open");
+    document.body.classList.remove("cite-open");
 }
 
 function linkifyCitations(text, sources) {

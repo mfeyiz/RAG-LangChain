@@ -84,4 +84,5 @@ The Google-managed certificate can take several minutes to become active after D
 - The app exposes `/healthz` for GKE health checks.
 - The ingress uses a Google-managed TLS certificate for `chat.mammas.studio`.
 - `BackendConfig.timeoutSec` is set to `300` so Server-Sent Events responses have enough time.
-- The image currently includes the checked-in `RAG/vector_db/corpus.jsonl`. If the Qdrant index is not included or generated, dense retrieval is skipped and the app falls back to BM25 retrieval.
+- The image currently includes the checked-in `RAG/vector_db/corpus.jsonl`. Dense vectors live in the Postgres `rag_chunks` table (pgvector), populated by the indexer on startup; if Postgres is unreachable, dense retrieval is skipped and the app falls back to BM25 retrieval.
+- The `postgres` StatefulSet (`pgvector/pgvector:pg16`) provides the vector store. Set `POSTGRES_PASSWORD`, `DATABASE_URL`, `JWT_SECRET` and the `ADMIN_*` credentials in the secret (see `secret.example.yaml`).

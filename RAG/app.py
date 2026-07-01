@@ -1,6 +1,7 @@
 import asyncio
 import json
 import mimetypes
+import re
 import sys
 import os
 import time
@@ -17,7 +18,12 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from RAG.agents.graph import create_graph
-from RAG.services.auth import authenticate_request
+from RAG.services import users, vector_store
+from RAG.services.auth import (
+    authenticate_request,
+    auth_configured,
+    create_access_token,
+)
 from RAG.services.document_manager import add_document, delete_document_by_source, list_documents
 from RAG.services.feedback import save_feedback, get_feedback_stats, list_feedback, update_feedback_comment
 from RAG.services.guardrails import guardrails
@@ -32,6 +38,13 @@ from RAG.services.retrieval import (
 )
 from RAG.services.session_store import session_store
 from RAG.services.tracing import get_langfuse_handler, new_trace_id, start_request_trace, trace_event
+from RAG.services.pending_edits import pop as pop_pending_edit, reject as reject_pending_edit
+from RAG.services import version_control
+from RAG.services.citation_highlight import (
+    render_highlighted_page,
+    render_highlighted_document,
+    CITE_DIR,
+)
 
 _START_TIME = time.time()
 
@@ -50,7 +63,13 @@ async def lifespan(_app: FastAPI):
         try:
             # 1. Warm up models in background to avoid blocking ASGI startup
             await asyncio.to_thread(warmup_models)
-            # 2. Run indexing after models are ready to avoid model
+            # 2. Provision the auth user table and seed the bootstrap admin.
+            await asyncio.to_thread(users.ensure_users_schema)
+            await asyncio.to_thread(users.ensure_admin_seed)
+            # 2b. Initialise the workspace Git repo (best-effort; no-op if
+            # GitPython / git is unavailable).
+            await asyncio.to_thread(version_control.ensure_repo)
+            # 3. Run indexing after models are ready to avoid model
             # loading race condition
             await asyncio.to_thread(ensure_index)
             _index_ready = True
@@ -107,7 +126,52 @@ async def status():
         "index_ready": _index_ready,
         "phase": phase,
         "message": message,
+        "auth_required": auth_configured(),
     }
+
+
+# ── Authentication ───────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+
+
+@app.post("/auth/login")
+async def login(body: LoginRequest):
+    """Exchange username/password for a signed JWT used by @update and admin APIs."""
+    if not auth_configured():
+        return JSONResponse(
+            {"error": "Kimlik doğrulama yapılandırılmamış (JWT_SECRET set değil)."},
+            status_code=503,
+        )
+
+    role = await asyncio.to_thread(users.verify_credentials, body.username, body.password)
+    if role is None:
+        return JSONResponse({"error": "Kullanıcı adı veya parola hatalı."}, status_code=401)
+
+    token = create_access_token(sub=body.username, role=role)
+    return {"token": token, "role": role, "username": body.username}
+
+
+@app.post("/auth/register")
+async def register(body: RegisterRequest, request: Request):
+    """Create a new user — admin only."""
+    auth = authenticate_request(request)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Bu işlem için yönetici yetkisi gerekir."}, status_code=403)
+
+    role = body.role if body.role in ("user", "admin") else "user"
+    ok = await asyncio.to_thread(users.create_user, body.username, body.password, role)
+    if not ok:
+        return JSONResponse({"error": "Kullanıcı oluşturulamadı."}, status_code=400)
+    return {"ok": True, "username": body.username, "role": role}
 
 
 # ── Ask (SSE with token streaming) ───────────────────────────────────────────
@@ -120,6 +184,16 @@ async def handle_query(request: Request):
 
     data = await request.json()
     user_query = data.get("query", "")
+
+    # @update triggers the editor write-back path (it mutates the workspace index),
+    # so it is restricted to authenticated callers. The regex mirrors the one in
+    # RAG/agents/supervisor.py that routes @update to the editor.
+    if re.search(r"@update\b", user_query, flags=re.IGNORECASE) and not auth.authenticated:
+        return JSONResponse(
+            {"error": "@update için giriş yapmalısınız. Lütfen oturum açın."},
+            status_code=403,
+        )
+
     allow_web = bool(data.get("allow_web", False))
     # User-attached images (multimodal): list of base64 data URLs. Cap to bound
     # the vision prompt size.
@@ -170,6 +244,15 @@ async def handle_query(request: Request):
             "edit_target_file": "",
             "edit_summary": "",
             "regenerated_pdf": "",
+            "fast_track": False,
+            "edit_preview": {},
+            "edit_pending": False,
+            "needs_edit_approval": False,
+            "edit_token": "",
+            "needs_calculation": False,
+            "calc_request": "",
+            "calc_result": "",
+            "table_data": [],
         }
 
         try:
@@ -230,9 +313,16 @@ async def handle_query(request: Request):
                         output = event["data"].get("output", {})
                         metadata = output.get("search_metadata", [])
                         if metadata:
+                            # parent_content (the full section) is only needed by
+                            # the editor's in-process retrieval; the evidence panel
+                            # never renders it, so keep it out of the SSE payload.
+                            slim = [
+                                {k: v for k, v in item.items() if k != "parent_content"}
+                                for item in metadata
+                            ]
                             yield {
                                 "event": "search_results",
-                                "data": json.dumps(metadata, ensure_ascii=False),
+                                "data": json.dumps(slim, ensure_ascii=False),
                             }
                         # Figures anchored to the retrieved context, as servable URLs.
                         context_images = output.get("context_images", [])
@@ -257,22 +347,40 @@ async def handle_query(request: Request):
                                 "data": json.dumps({"query": user_query}, ensure_ascii=False),
                             }
 
-                    # Final response (editor also surfaces an edit_result event)
+                    # Final response (editor also surfaces an edit_preview / edit_result event)
                     elif event_type == "on_chain_end" and node in ("reviewer", "writer", "editor"):
                         output = event["data"].get("output", {})
                         if node == "editor":
-                            pdf_source = output.get("regenerated_pdf", "")
-                            yield {
-                                "event": "edit_result",
-                                "data": json.dumps(
-                                    {
-                                        "file": output.get("edit_target_file", ""),
-                                        "summary": output.get("edit_summary", ""),
-                                        "pdf_url": f"/workspace/pdf/{pdf_source}" if pdf_source else "",
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
+                            # Human-in-the-loop: editor produced a diff preview
+                            # awaiting approval; surface it instead of a result.
+                            if output.get("needs_edit_approval"):
+                                preview = output.get("edit_preview", {}) or {}
+                                yield {
+                                    "event": "edit_preview",
+                                    "data": json.dumps(
+                                        {
+                                            "token": output.get("edit_token", ""),
+                                            "file": output.get("edit_target_file", ""),
+                                            "instruction": output.get("edit_instruction", ""),
+                                            "change_kind": preview.get("change_kind", ""),
+                                            "diff": preview.get("diff", []),
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            else:
+                                pdf_source = output.get("regenerated_pdf", "")
+                                yield {
+                                    "event": "edit_result",
+                                    "data": json.dumps(
+                                        {
+                                            "file": output.get("edit_target_file", ""),
+                                            "summary": output.get("edit_summary", ""),
+                                            "pdf_url": f"/workspace/pdf/{pdf_source}" if pdf_source else "",
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
                         fr = output.get("final_response", "")
                         if fr and not final_response:
                             final_response = fr
@@ -315,29 +423,23 @@ async def get_suggestions(
     if len(q) < 2:
         return {"suggestions": []}
 
-    retriever = get_retriever()
-    if retriever.qdrant is None:
+    if vector_store.get_pool() is None:
         return {"suggestions": _bm25_suggestions(q, limit)}
 
     try:
         query_vector = await asyncio.to_thread(_get_embeddings().embed_query, q)
-        response = retriever.qdrant.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector,
-            limit=limit * 4,
-            with_payload=True,
+        rows = await asyncio.to_thread(
+            vector_store.query, COLLECTION_NAME, query_vector, limit * 4
         )
-        points = response.points
     except Exception as exc:
-        print(f"[Suggestions] Qdrant search failed: {exc}")
+        print(f"[Suggestions] pgvector search failed: {exc}")
         return {"suggestions": _bm25_suggestions(q, limit)}
 
     seen: set[str] = set()
     suggestions: list[dict] = []
 
-    for point in points:
-        payload = point.payload or {}
-        metadata = payload.get("metadata", {})
+    for row in rows:
+        metadata = row.get("metadata", {})
         kind = metadata.get("kind", "")
         source = metadata.get("source", "unknown")
 
@@ -358,7 +460,7 @@ async def get_suggestions(
 
 
 def _bm25_suggestions(q: str, limit: int) -> list[dict]:
-    """Fallback: BM25 prefix match on corpus titles when Qdrant is unavailable."""
+    """Fallback: BM25 prefix match on corpus titles when pgvector is unavailable."""
     retriever = get_retriever()
     q_lower = q.lower()
     seen: set[str] = set()
@@ -521,6 +623,141 @@ async def document_content(source: str, channel: str = Query(default="workspace"
     }
 
 
+# ── Citation → original PDF page + highlight ───────────────────────────────────
+
+class CiteRequest(BaseModel):
+    source: str
+    snippet: str
+    page: int | None = None
+
+
+@app.post("/cite")
+async def cite_lookup(body: CiteRequest):
+    """Resolve a cited snippet to its page in the original PDF and return a
+    rendered, highlighted page image for the chat preview panel."""
+    result = await asyncio.to_thread(render_highlighted_page, body.source, body.snippet, body.page)
+    if "error" in result:
+        return JSONResponse(result, status_code=404)
+    return result
+
+
+class CiteDocRequest(BaseModel):
+    source: str
+    snippets: list[str] = []
+    focus_snippet: str | None = None
+
+
+@app.post("/cite/doc")
+async def cite_doc(body: CiteDocRequest):
+    """Render the whole original PDF with every retrieved chunk of `source`
+    highlighted, for the scrollable citation viewer."""
+    try:
+        result = await asyncio.to_thread(
+            render_highlighted_document, body.source, body.snippets, body.focus_snippet
+        )
+    except Exception as exc:
+        # Never surface a bare 500 — the viewer would just show an empty grey
+        # panel. Return a structured error the frontend can display.
+        print(f"[Citation] /cite/doc failed for {body.source}: {exc}")
+        return JSONResponse({"error": "Atıf görüntüsü oluşturulamadı."}, status_code=404)
+    if "error" in result:
+        return JSONResponse(result, status_code=404)
+    return result
+
+
+@app.get("/cite/image/{name}")
+async def cite_image(name: str):
+    img = (CITE_DIR / Path(name).name).resolve()
+    try:
+        img.relative_to(CITE_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+    if not img.exists():
+        return JSONResponse({"error": "Image not found."}, status_code=404)
+    return FileResponse(str(img), media_type="image/png", filename=img.name)
+
+
+# ── @update approval (human-in-the-loop) + Git version control ────────────────
+
+class UpdateApplyRequest(BaseModel):
+    token: str
+
+
+@app.post("/update/apply")
+async def update_apply(request: Request, body: UpdateApplyRequest):
+    """Persist a previously-stashed @update edit the user approved in the diff
+    viewer. Requires authentication (same as @update itself)."""
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "@update onayı için giriş yapmalısınız."}, status_code=403)
+
+    edit = pop_pending_edit(body.token)
+    if not edit:
+        return JSONResponse({"error": "Bekleyen değişiklik bulunamadı veya süresi doldu."}, status_code=404)
+
+    from RAG.agents.editor import apply_pending_edit
+
+    try:
+        result = await asyncio.to_thread(apply_pending_edit, edit)
+    except Exception as exc:
+        return JSONResponse({"error": f"Değişiklik uygulanamadı: {exc}"}, status_code=500)
+
+    pdf_url = f"/workspace/pdf/{result['source']}" if result.get("pdf_ok") else ""
+    return {
+        "ok": True,
+        "file": result["source"],
+        "summary": result["summary"],
+        "reply": result["reply"],
+        "pdf_url": pdf_url,
+        "git_sha": result.get("git_sha"),
+        "chunks_added": result.get("chunks_added", 0),
+    }
+
+
+@app.post("/update/reject")
+async def update_reject(request: Request, body: UpdateApplyRequest):
+    """Discard a stashed @update edit (user clicked Reddet)."""
+    auth = authenticate_request(request)
+    if not auth.allowed:
+        return JSONResponse({"error": auth.error}, status_code=401)
+    ok = reject_pending_edit(body.token)
+    return {"ok": ok}
+
+
+@app.get("/admin/history")
+async def admin_history(request: Request, source: str = Query(default=""), limit: int = Query(default=50, le=200)):
+    _, err = _require_admin(request)
+    if err:
+        return err
+    return {"source": source or None, "commits": version_control.history(source or None, limit)}
+
+
+@app.post("/admin/restore")
+async def admin_restore(request: Request, body: dict):
+    _, err = _require_admin(request)
+    if err:
+        return err
+    source = (body or {}).get("source", "")
+    ref = (body or {}).get("ref", "")
+    if not source or not ref:
+        return JSONResponse({"error": "source ve ref gerekli."}, status_code=400)
+
+    try:
+        result = await asyncio.to_thread(version_control.restore, source, ref)
+    except Exception as exc:
+        return JSONResponse({"error": f"Geri yükleme başarısız: {exc}"}, status_code=500)
+
+    # Re-index the restored workspace markdown + regenerate its PDF.
+    from RAG.services.document_manager import reindex_workspace_source
+    from RAG.agents.editor import _render_pdf_safe
+    try:
+        await asyncio.to_thread(reindex_workspace_source, source)
+        await asyncio.to_thread(_render_pdf_safe, source)
+    except Exception as exc:
+        print(f"[restore] reindex/pdf failed: {exc}")
+    return {"ok": True, **result}
+
+
 # ── Admin API ─────────────────────────────────────────────────────────────────
 
 def _require_admin(request: Request):
@@ -544,7 +781,7 @@ async def admin_stats(request: Request):
     return {
         "uptime_seconds": round(time.time() - _START_TIME),
         "corpus_chunks": len(retriever.corpus),
-        "qdrant_available": retriever.qdrant is not None,
+        "vector_store_available": vector_store.get_pool() is not None,
         "models_ready": models_ready(),
         "feedback": feedback,
     }

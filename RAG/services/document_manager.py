@@ -2,7 +2,7 @@
 
 Ingestion writes every uploaded document into BOTH channels (read-only
 `originals` and editable `workspace`); the editor write-back only touches
-`workspace`. Add/delete keep Qdrant and the per-channel corpus.jsonl in sync
+`workspace`. Add/delete keep pgvector and the per-channel corpus.jsonl in sync
 without a full re-index.
 """
 import json
@@ -15,15 +15,15 @@ from pathlib import Path
 from langchain_core.documents import Document
 
 from RAG.services.converter import convert_to_markdown, convert_to_markdown_with_images
-from RAG.services import paths
+from RAG.services import paths, vector_store
+from RAG.services.table_store import extract_tables, TABLES_DIR_BASE as _TABLES_DIR_BASE
 from RAG.services.retrieval import (
     CHANNELS,
     DEFAULT_CHANNEL,
     channel_collection,
     channel_corpus_path,
-    get_qdrant_client,
     get_retriever,
-    _collection_exists,
+    invalidate_channel_cache,
     _get_embeddings,
 )
 from RAG.services.rag_service import semantic_chunk_documents
@@ -79,6 +79,14 @@ def add_document(file_bytes: bytes, filename: str) -> dict:
     originals_md.write_text(markdown, encoding="utf-8")
     workspace_md.write_text(markdown, encoding="utf-8")
 
+    # Persist structured table sidecars (CSV+JSON) so the code-interpreter node
+    # can do real arithmetic over financial/table-heavy documents instead of
+    # asking the LLM to approximate it.
+    try:
+        extract_tables(markdown, source)
+    except Exception as exc:
+        print(f"[DocumentManager] table extraction failed for {source}: {exc}")
+
     # 3. Chunk once; index the same chunks into both channels.
     chunks = _chunk_markdown(markdown, source, stem)
     if not chunks:
@@ -91,13 +99,19 @@ def add_document(file_bytes: bytes, filename: str) -> dict:
         }
 
     vectors = _get_embeddings().embed_documents([c.page_content for c in chunks])
+    # Index figures as their own points in the shared multimodal space.
+    figure_docs, figure_vectors = _build_figure_index(chunks, source, stem)
     for channel in CHANNELS:
         # Replace any prior copy of this source (re-upload == update).
-        _delete_from_qdrant_by_source(source, channel)
+        _delete_from_vector_store_by_source(source, channel)
         _remove_from_corpus(source, channel)
-        _upsert_to_qdrant(chunks, vectors, channel)
+        _upsert_to_vector_store(chunks, vectors, channel)
         _append_to_corpus(chunks, channel)
+        if figure_docs:
+            _upsert_to_vector_store(figure_docs, figure_vectors, channel)
+            _append_to_corpus(figure_docs, channel)
         get_retriever(channel).reload_corpus()
+        invalidate_channel_cache(channel)
 
     return {
         "filename": filename,
@@ -122,15 +136,20 @@ def reindex_workspace_source(source: str) -> dict:
     stem = paths.stem_of(source)
     chunks = _chunk_markdown(markdown, source, stem)
 
-    _delete_from_qdrant_by_source(source, "workspace")
+    _delete_from_vector_store_by_source(source, "workspace")
     _remove_from_corpus(source, "workspace")
 
     if chunks:
         vectors = _get_embeddings().embed_documents([c.page_content for c in chunks])
-        _upsert_to_qdrant(chunks, vectors, "workspace")
+        _upsert_to_vector_store(chunks, vectors, "workspace")
         _append_to_corpus(chunks, "workspace")
+        figure_docs, figure_vectors = _build_figure_index(chunks, source, stem)
+        if figure_docs:
+            _upsert_to_vector_store(figure_docs, figure_vectors, "workspace")
+            _append_to_corpus(figure_docs, "workspace")
 
     get_retriever("workspace").reload_corpus()
+    invalidate_channel_cache("workspace")
     return {"source": source, "chunks_added": len(chunks)}
 
 
@@ -140,8 +159,9 @@ def delete_document_by_source(source: str, channel: str | None = None) -> dict:
     channels = [channel] if channel else list(CHANNELS)
     deleted = 0
     for ch in channels:
-        deleted += max(_delete_from_qdrant_by_source(source, ch), _remove_from_corpus(source, ch))
+        deleted += max(_delete_from_vector_store_by_source(source, ch), _remove_from_corpus(source, ch))
         get_retriever(ch).reload_corpus()
+        invalidate_channel_cache(ch)
 
     if channel is None:
         _delete_artifacts(source)
@@ -208,36 +228,77 @@ def _chunk_markdown(markdown: str, source: str, stem: str) -> list:
     return semantic_chunk_documents([doc])
 
 
-def _upsert_to_qdrant(chunks, vectors, channel: str):
-    try:
-        from qdrant_client.models import Distance, PointStruct, VectorParams
+def _build_figure_index(chunks, source: str, stem: str):
+    """Embed each figure image as its OWN point in the shared (multimodal) space.
 
-        client = get_qdrant_client(create=True)
-        if client is None:
-            return
-        collection = channel_collection(channel)
-        if not _collection_exists(client, collection):
-            client.create_collection(
-                collection_name=collection,
-                vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE),
-            )
+    With Gemini Embedding 2 text and images live in one vector space, so a text
+    query can hit a figure's image vector directly. Returns (figure_docs,
+    figure_vectors); empty when the embedder can't embed images (e.g. the local
+    HF fallback) or no figures are present.
+    """
+    embeddings = _get_embeddings()
+    if not hasattr(embeddings, "embed_image"):
+        return [], []
 
-        points = [
-            PointStruct(
-                id=uuid.uuid4().hex,
-                vector=vec,
-                payload={
-                    "doc_id": chunk.metadata["doc_id"],
-                    "content": chunk.page_content,
-                    "metadata": chunk.metadata,
+    # Unique figures with the section they were anchored to (first occurrence).
+    seen: dict[str, dict] = {}
+    for chunk in chunks:
+        meta = chunk.metadata
+        for name in meta.get("images", []) or []:
+            if name not in seen:
+                seen[name] = {
+                    "heading_path": meta.get("heading_path", ""),
+                    "parent_id": meta.get("parent_id", ""),
+                }
+    if not seen:
+        return [], []
+
+    figure_docs, figure_vectors = [], []
+    for name, anchor in seen.items():
+        img_path = paths.image_path("workspace", stem, name) or paths.image_path("originals", stem, name)
+        if img_path is None:
+            continue
+        try:
+            vector = embeddings.embed_image(img_path)
+        except Exception as exc:
+            print(f"[DocumentManager] Figure embed failed for {name}: {exc}")
+            continue
+        heading_path = anchor["heading_path"]
+        content = f"{heading_path} (figure: {name})" if heading_path else f"figure: {name}"
+        doc_id = "fig-" + uuid.uuid5(uuid.NAMESPACE_URL, f"{source}|{name}").hex
+        figure_docs.append(
+            Document(
+                page_content=content,
+                metadata={
+                    "source": source,
+                    "title": stem,
+                    "kind": "figure",
+                    "name": name,
+                    "images": [name],
+                    "heading_path": heading_path,
+                    "parent_id": anchor["parent_id"],
+                    "doc_id": doc_id,
                 },
             )
-            for chunk, vec in zip(chunks, vectors)
-        ]
-        for start in range(0, len(points), 64):
-            client.upsert(collection_name=collection, points=points[start: start + 64])
-    except Exception as exc:
-        print(f"[DocumentManager] Qdrant upsert failed ({channel}): {exc}")
+        )
+        figure_vectors.append(vector)
+    return figure_docs, figure_vectors
+
+
+def _upsert_to_vector_store(chunks, vectors, channel: str):
+    if not chunks or not vectors:
+        return
+    vector_store.ensure_schema(len(vectors[0]))
+    rows = [
+        {
+            "doc_id": chunk.metadata["doc_id"],
+            "content": chunk.page_content,
+            "metadata": chunk.metadata,
+            "embedding": vec,
+        }
+        for chunk, vec in zip(chunks, vectors)
+    ]
+    vector_store.upsert(channel_collection(channel), rows)
 
 
 def _append_to_corpus(chunks, channel: str):
@@ -253,25 +314,8 @@ def _append_to_corpus(chunks, channel: str):
             )
 
 
-def _delete_from_qdrant_by_source(source: str, channel: str) -> int:
-    try:
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
-
-        client = get_qdrant_client()
-        collection = channel_collection(channel)
-        if client is None or not _collection_exists(client, collection):
-            return 0
-
-        result = client.delete(
-            collection_name=collection,
-            points_selector=Filter(
-                must=[FieldCondition(key="metadata.source", match=MatchValue(value=source))]
-            ),
-        )
-        return getattr(result, "deleted_count", 0) or 0
-    except Exception as exc:
-        print(f"[DocumentManager] Qdrant delete failed ({channel}): {exc}")
-        return 0
+def _delete_from_vector_store_by_source(source: str, channel: str) -> int:
+    return vector_store.delete_by_source(channel_collection(channel), source)
 
 
 def _remove_from_corpus(source: str, channel: str) -> int:
@@ -312,3 +356,8 @@ def _delete_artifacts(source: str) -> None:
     for img_dir in (paths.originals_images_dir(source), paths.workspace_images_dir(source)):
         if img_dir.exists():
             shutil.rmtree(img_dir, ignore_errors=True)
+
+    # Remove structured table sidecars for this source.
+    tables_dir = _TABLES_DIR_BASE / paths.stem_of(source)
+    if tables_dir.exists():
+        shutil.rmtree(tables_dir, ignore_errors=True)

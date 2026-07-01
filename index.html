@@ -44,6 +44,10 @@
                 <span class="material-symbols-outlined">add</span>
                 Yeni oturum
             </button>
+            <button class="ghost-button" id="authButton" type="button">
+                <span class="material-symbols-outlined">login</span>
+                <span id="authButtonLabel">Giriş yap</span>
+            </button>
         </div>
     </header>
 
@@ -258,6 +262,29 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- ── Login modal ──────────────────────────────────────────── -->
+    <div id="authModal" class="modal-overlay" hidden>
+        <div class="modal-box modal-box-narrow">
+            <div class="modal-header">
+                <h2>Giriş Yap</h2>
+                <button class="modal-close" id="authModalClose" type="button" aria-label="Kapat">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <p class="auth-hint">@update ile belge güncellemek için giriş yapmanız gerekir.</p>
+
+            <form id="authForm" class="auth-form">
+                <label for="authUsername">Kullanıcı adı</label>
+                <input type="text" id="authUsername" autocomplete="username" required>
+                <label for="authPassword">Parola</label>
+                <input type="password" id="authPassword" autocomplete="current-password" required>
+                <div id="authError" class="auth-error" hidden></div>
+                <button type="submit" class="primary-button" id="authSubmit">Giriş yap</button>
+            </form>
         </div>
     </div>
 

@@ -36,6 +36,11 @@ env/
 .env.*
 !.env.example # Örnek şablonun gitmesine izin verir
 
+# Google Cloud service-account key files — MUST never be committed.
+project-*.json
+*service-account*.json
+*-sa-key.json
+
 # --- IDE ve Editör ---
 .vscode/
 .idea/

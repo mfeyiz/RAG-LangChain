@@ -22,7 +22,10 @@ dependencies = [
     "ollama>=0.6.1",
     "openai>=2.16.0",
     "pypdf>=6.6.2",
-    "qdrant-client>=1.16.0",
+    # Dense vector store: Postgres + pgvector (replaces Qdrant).
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "pgvector>=0.3.6",
     "python-dotenv>=1.2.1",
     "ragas>=0.3.0",
     "requests>=2.32.5",
@@ -41,6 +44,19 @@ dependencies = [
     # structure; pillow handles the extracted image files.
     "docling>=2.0.0",
     "pillow>=10.0.0",
+    # Google Cloud retrieval stack (provider-agnostic; imported lazily, only when
+    # the matching env flag selects them):
+    #   DOC_PARSER=documentai       -> google-cloud-documentai (+ pymupdf crop)
+    #   EMBEDDING_PROVIDER=google   -> google-genai (already above), Gemini Embedding 2
+    #   RERANKER_PROVIDER=vertex    -> google-cloud-discoveryengine (Ranking API)
+    "google-cloud-documentai>=2.30.0",
+    "google-cloud-discoveryengine>=0.13.0",
+    "pymupdf>=1.24.0",
+    # Code interpreter node + dynamic chart generation (Feature 4b/4c).
+    "pandas>=2.0.0",
+    "matplotlib>=3.8.0",
+    # Git-backed workspace version control (Feature 2): @update → commit, restore.
+    "GitPython>=3.1.0",
 ]
 
 [dependency-groups]

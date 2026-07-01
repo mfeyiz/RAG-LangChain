@@ -90,15 +90,28 @@ def convert_to_markdown_with_images(file_path: Path, images_dir: Path) -> tuple[
 
     images_dir = Path(images_dir)
     images_dir.mkdir(parents=True, exist_ok=True)
+    parser = os.getenv("DOC_PARSER", "docling").strip().lower()
     try:
-        markdown, image_names = _docling_export_with_images(file_path, images_dir)
+        if parser == "documentai":
+            from RAG.services.documentai_parser import documentai_export_with_images
+
+            markdown, image_names = documentai_export_with_images(file_path, images_dir)
+        else:
+            markdown, image_names = _docling_export_with_images(file_path, images_dir)
     except Exception as exc:  # pragma: no cover - backend-specific failures
-        print(f"[Converter] Image extraction unavailable, falling back to text-only: {exc}")
-        return convert_to_markdown(file_path), []
+        print(f"[Converter] {parser} image extraction failed, falling back: {exc}")
+        # Try docling once before giving up on figures entirely, then text-only.
+        try:
+            if parser == "documentai":
+                markdown, image_names = _docling_export_with_images(file_path, images_dir)
+            else:
+                raise exc
+        except Exception:
+            return convert_to_markdown(file_path), []
 
     markdown = (markdown or "").strip()
     if not markdown:
-        raise ConversionError(f"docling produced empty Markdown for {file_path.name}")
+        raise ConversionError(f"{parser} produced empty Markdown for {file_path.name}")
     return markdown, image_names
 
 

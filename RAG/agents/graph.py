@@ -10,6 +10,7 @@ from RAG.agents.researcher import researcher_node
 from RAG.agents.writer import writer_node
 from RAG.agents.reviewer import reviewer_node
 from RAG.agents.editor import editor_node
+from RAG.agents.code_interpreter import code_interpreter_node
 
 
 def route_supervisor(state: AgentState) -> str:
@@ -29,6 +30,7 @@ async def create_graph():
     workflow.add_node("writer", writer_node)
     workflow.add_node("reviewer", reviewer_node)
     workflow.add_node("editor", editor_node)
+    workflow.add_node("code_interpreter", code_interpreter_node)
 
     workflow.set_entry_point("supervisor")
 
@@ -40,6 +42,7 @@ async def create_graph():
             "writer": "writer",
             "reviewer": "reviewer",
             "editor": "editor",
+            "code_interpreter": "code_interpreter",
             "finish": END,
         },
     )
@@ -48,6 +51,9 @@ async def create_graph():
     workflow.add_edge("writer", "supervisor")
     workflow.add_edge("reviewer", "supervisor")
     workflow.add_edge("editor", "supervisor")
+    # Code interpreter computes/returns research_results → back to supervisor
+    # which then routes to writer to fold the result into the user-facing answer.
+    workflow.add_edge("code_interpreter", "supervisor")
 
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
 

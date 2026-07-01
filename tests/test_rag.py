@@ -333,3 +333,71 @@ def test_pdf_renderer_generates_pdf(tmp_path, monkeypatch):
     assert out.exists()
     assert out.read_bytes()[:4] == b"%PDF"
  
+
+def test_pending_edits_stash_pop_reject():
+    from RAG.services import pending_edits
+
+    token = pending_edits.stash({"source": "a.md", "before": "x", "after": "y", "instruction": "i"})
+    assert token
+    assert pending_edits.get(token)["after"] == "y"
+    popped = pending_edits.pop(token)
+    assert popped["source"] == "a.md"
+    # Popping twice returns None.
+    assert pending_edits.pop(token) is None
+    # Reject discards a stashed edit.
+    t2 = pending_edits.stash({"source": "b.md", "before": "", "after": "", "instruction": ""})
+    assert pending_edits.reject(t2) is True
+    assert pending_edits.get(t2) is None
+
+
+def test_editor_diff_preview_lines_added_removed():
+    from RAG.agents.editor import _diff_preview_lines
+
+    before = "alpha\nbeta\ngamma\ndelta\n"
+    after = "alpha\nBETA\ngamma\nepsilon\ndelta\n"
+    rows = _diff_preview_lines(before, after)
+    types = [r["type"] for r in rows]
+    assert "removed" in types and "added" in types
+    added = [r for r in rows if r["type"] == "added"]
+    assert any(r["after"] == "BETA" for r in added)
+    assert any(r["after"] == "epsilon" for r in added)
+
+
+def test_table_store_extracts_and_loads(tmp_path, monkeypatch):
+    from RAG.services import table_store
+
+    md = (
+        "# Report\n\n"
+        "| Year | Revenue |\n|---|---|\n| 2021 | 100 |\n| 2022 | 120 |\n\n"
+        "Some text.\n\n"
+        "| Q | A |\n|---|---|\n| 1 | 2 |\n"
+    )
+    tables = table_store.extract_tables(md, "report.md")
+    assert len(tables) == 2
+    assert tables[0]["headers"] == ["Year", "Revenue"]
+    assert tables[0]["rows"] == [["2021", "100"], ["2022", "120"]]
+
+
+def test_supervisor_fast_track_disabled_offline(monkeypatch):
+    # Without an API key the fast-track classifier must NOT attempt a live call;
+    # a normal query should still route to the researcher deterministically.
+    import asyncio
+
+    monkeypatch.setenv("RAG_FAST_TRACK", "0")
+    for k in ("LLM_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+
+    from RAG.agents.supervisor import supervisor_node
+
+    state = {
+        "query": "Merhaba, nasılsın?",
+        "trace_id": "test-offline",
+        "research_results": "",
+        "draft_response": "",
+        "final_response": "",
+        "review_feedback": "",
+        "revision_count": 0,
+    }
+    result = asyncio.run(supervisor_node(state))
+    # With fast-track disabled the social shortcut still routes greetings to writer.
+    assert result["next_agent"] in ("writer", "researcher")

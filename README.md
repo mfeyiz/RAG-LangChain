@@ -1,6 +1,6 @@
 # RAG Multi-Agent System
 
-FastAPI, LangGraph, BGE-M3, Qdrant, hybrid retrieval, BGE reranking, and optional RAGAS/DeepEval evaluation.
+FastAPI, LangGraph, BGE-M3, Postgres + pgvector, hybrid retrieval, BGE reranking, token auth, and optional RAGAS/DeepEval evaluation.
 
 ## Pipeline
 
@@ -10,7 +10,7 @@ flowchart TD
         D[Documents] --> C[Semantic Chunking]
         C --> M[Metadata Extraction]
         M --> E[BGE-M3 Embeddings]
-        E --> V[Qdrant + corpus.jsonl]
+        E --> V[pgvector rag_chunks + corpus.jsonl]
         E --> P[(PostgreSQL)]
     end
 
@@ -83,9 +83,9 @@ Open `http://localhost:8000`.
 
 ## Notes
 
-- `RAG/services/rag_service.py` builds `RAG/vector_db/corpus.jsonl` and a local Qdrant collection under `RAG/vector_db/qdrant`.
-- `RAG/services/retrieval.py` merges BM25 and Qdrant dense candidates, then reranks with `BAAI/bge-reranker-large`.
-- If Qdrant or the reranker is unavailable, the app falls back gracefully to corpus/BM25 retrieval.
-- JWT authentication is enabled when `JWT_SECRET` is set. Without it, local development stays open.
+- `RAG/services/rag_service.py` builds `RAG/vector_db/corpus.jsonl` (BM25) and writes dense vectors into the Postgres `rag_chunks` table via `RAG/services/vector_store.py` (pgvector). Set `DATABASE_URL` to point at Postgres.
+- `RAG/services/retrieval.py` merges BM25 and pgvector dense candidates, then reranks with `BAAI/bge-reranker-large`.
+- If Postgres/pgvector or the reranker is unavailable, the app falls back gracefully to corpus/BM25 retrieval.
+- Token authentication is enabled when `JWT_SECRET` is set. Reads stay anonymous; `@update` (editor write-back) requires a valid token from `POST /auth/login`. Users live in Postgres (`auth_users`); a bootstrap admin is seeded from `ADMIN_USERNAME`/`ADMIN_PASSWORD`. `ALLOW_INSECURE_DEV=1` treats everything as an authenticated admin for local development.
 - Redis is optional. When `REDIS_URL` is missing or unavailable, session state and retrieval cache fall back to in-process memory.
 - Langfuse is optional. When it is disabled or unavailable, traces are written under `RAG/traces`.

@@ -75,8 +75,28 @@ spec:
               value: /cache/sentence-transformers
             - name: REDIS_URL
               value: redis://redis:6379
-            - name: QDRANT_URL
-              value: http://qdrant:6333
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: JWT_SECRET
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: ADMIN_USERNAME
+                  optional: true
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: ADMIN_PASSWORD
+                  optional: true
           readinessProbe:
             httpGet:
               path: /healthz

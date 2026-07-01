@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
+from RAG.services import vector_store
 from RAG.services.embeddings import create_embeddings
 
 
@@ -21,18 +22,23 @@ FINAL_CONTEXT_K = 5
 RERANK_INPUT_K = int(os.getenv("RERANK_INPUT_K", "12"))
 # bge-reranker-base is ~2x faster than -large on CPU with similar ranking quality.
 RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-base")
+# Reranker provider: "vertex" = Vertex AI Ranking API (Discovery Engine);
+# "local" = the bge cross-encoder above (offline / no GCP).
+RERANKER_PROVIDER = os.getenv("RERANKER_PROVIDER", "local").strip().lower()
+VERTEX_RANKER_MODEL = os.getenv("VERTEX_RANKER_MODEL", "semantic-ranker-default-004")
 # Candidates below this score are dropped after reranking to avoid irrelevant results.
 RERANK_SCORE_THRESHOLD = float(os.getenv("RERANK_SCORE_THRESHOLD", "0.05"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 VECTOR_DIR = BASE_DIR / "vector_db"
-QDRANT_PATH = VECTOR_DIR / "qdrant"
 
 # ── Dual-channel configuration ────────────────────────────────────────────────
-# Two isolated retrieval channels share a single Qdrant store (one directory,
-# two collections) but keep separate BM25 corpora on disk:
+# Two isolated retrieval channels share a single pgvector table (one ``rag_chunks``
+# table, distinguished by the ``channel`` column) but keep separate BM25 corpora
+# on disk:
 #   - "originals":  read-only ground-truth index (never edited)
 #   - "workspace":  active RAG index the chat queries and the editor mutates
+# The "collection" value is used as the pgvector ``channel`` column value.
 CHANNELS: dict[str, dict] = {
     "originals": {"collection": "rag_originals", "corpus": VECTOR_DIR / "corpus_originals.jsonl"},
     "workspace": {"collection": "rag_workspace", "corpus": VECTOR_DIR / "corpus_workspace.jsonl"},
@@ -96,7 +102,10 @@ def retrieve_context(
 ) -> tuple[str, list[dict]]:
     retriever = get_retriever(channel)
     candidates = retriever.retrieve(query, top_k=top_k)
-    return format_docs(candidates), search_metadata(candidates)
+    # Feed the LLM the full parent SECTION of each matched child (deduped by
+    # parent_id) for richer context; keep child-level metadata for the evidence
+    # panel and for the editor's anchor.
+    return format_docs_with_parents(candidates), search_metadata(candidates)
 
 
 async def retrieve_context_async(
@@ -116,57 +125,12 @@ def _get_embeddings():
     return _embeddings_model
 
 
-# Shared Qdrant client. Local file-based Qdrant permits only ONE client per
-# directory (file lock), so every channel and the indexer must reuse this one.
-_qdrant_singleton = None
-
-
-def get_qdrant_client(create: bool = False):
-    """Return the process-wide Qdrant client, opening it on first use.
-
-    `create=True` allows creating the local store directory (used by writers);
-    readers pass `create=False` and get None until the store exists.
-    """
-    global _qdrant_singleton
-    if _qdrant_singleton is not None:
-        return _qdrant_singleton
-
-    try:
-        from qdrant_client import QdrantClient
-
-        qdrant_url = os.getenv("QDRANT_URL", "").strip()
-        if qdrant_url:
-            _qdrant_singleton = QdrantClient(url=qdrant_url)
-        else:
-            if not QDRANT_PATH.exists() and not create:
-                return None
-            QDRANT_PATH.mkdir(parents=True, exist_ok=True)
-            _qdrant_singleton = QdrantClient(path=str(QDRANT_PATH))
-    except Exception as exc:
-        print(f"[Retrieval] Qdrant unavailable: {exc}")
-        return None
-    return _qdrant_singleton
-
-
-def reset_qdrant_client() -> None:
-    """Drop the cached client so the next call reconnects (used after errors)."""
-    global _qdrant_singleton
-    _qdrant_singleton = None
-
-
-def _collection_exists(client, collection_name: str) -> bool:
-    try:
-        return bool(client) and client.collection_exists(collection_name)
-    except Exception:
-        return False
-
-
 # Per-channel retriever singletons.
 _RETRIEVERS: dict[str, "HybridRetriever"] = {}
 
 
 def get_retriever(channel: str = DEFAULT_CHANNEL):
-    # Never recreate the instance: if Qdrant was None at startup, _dense_search retries inline.
+    # Never recreate the instance: if Postgres was None at startup, _dense_search retries inline.
     if channel not in _RETRIEVERS:
         _RETRIEVERS[channel] = HybridRetriever(channel)
     return _RETRIEVERS[channel]
@@ -182,7 +146,7 @@ def warmup_models() -> None:
     _load_reranker()
     for channel in CHANNELS:
         get_retriever(channel)   # init corpus + BM25 per channel
-    get_qdrant_client()          # attempt shared Qdrant connection
+    vector_store.get_pool()      # attempt shared Postgres connection
     _models_ready = True
 
 
@@ -197,12 +161,7 @@ class HybridRetriever:
         self.corpus_path = channel_corpus_path(channel)
         self.corpus = _load_corpus(self.corpus_path)
         self.bm25 = BM25Index(self.corpus)
-        # embeddings live in _embeddings_model; the Qdrant client is shared via get_qdrant_client()
-
-    @property
-    def qdrant(self):
-        """Backward-compatible accessor — returns the shared Qdrant client."""
-        return get_qdrant_client()
+        # embeddings live in _embeddings_model; the pgvector pool is shared via vector_store.get_pool()
 
     def reload_corpus(self) -> None:
         """Reload this channel's corpus and rebuild BM25 index after incremental updates."""
@@ -246,33 +205,28 @@ class HybridRetriever:
         return selected
 
     def _dense_search(self, query: str) -> list[RetrievalCandidate]:
-        client = get_qdrant_client()
-        if client is None or not _collection_exists(client, self.collection_name):
-            print(f"[Retrieval] Dense search skipped: Qdrant/{self.collection_name} unavailable")
+        if vector_store.get_pool() is None:
+            print(f"[Retrieval] Dense search skipped: Postgres/{self.collection_name} unavailable")
             return []
 
         try:
             query_vector = _get_embeddings().embed_query(query)
-            points = _qdrant_query(client, query_vector, self.collection_name)
+            rows = vector_store.query(self.collection_name, query_vector, DENSE_SEARCH_K)
         except Exception as exc:
             print(f"[Retrieval] Dense search skipped: {exc}")
-            reset_qdrant_client()  # force reconnect next time
             return []
 
         candidates = []
-        for point in points:
-            payload = getattr(point, "payload", None) or {}
-            content = payload.get("content", "")
-            metadata = payload.get("metadata", {})
+        for row in rows:
+            content = row.get("content", "")
             if not content:
                 continue
-            score = getattr(point, "score", None)
             candidates.append(
                 RetrievalCandidate(
-                    doc_id=str(payload.get("doc_id") or getattr(point, "id", "")),
+                    doc_id=str(row.get("doc_id", "")),
                     content=content,
-                    metadata=metadata,
-                    dense_score=float(score) if score is not None else 0.0,
+                    metadata=row.get("metadata", {}),
+                    dense_score=float(row.get("score", 0.0) or 0.0),
                 )
             )
         return candidates
@@ -348,6 +302,15 @@ class BM25Index:
 
 
 def rerank_candidates(query: str, candidates: list[RetrievalCandidate]) -> list[RetrievalCandidate]:
+    if not candidates:
+        return candidates
+
+    if RERANKER_PROVIDER == "vertex":
+        scored = _vertex_rerank(query, candidates)
+        if scored is not None:
+            return scored
+        # fall through to the local reranker if the Vertex call failed
+
     reranker = _load_reranker()
     if reranker is None:
         return sorted(candidates, key=lambda item: item.final_score, reverse=True)
@@ -365,18 +328,75 @@ def rerank_candidates(query: str, candidates: list[RetrievalCandidate]) -> list[
     return sorted(candidates, key=lambda item: item.final_score, reverse=True)
 
 
-def format_docs(candidates: Iterable[RetrievalCandidate]) -> str:
-    blocks = []
-    for index, candidate in enumerate(candidates, start=1):
+def _vertex_rerank(
+    query: str, candidates: list[RetrievalCandidate]
+) -> list[RetrievalCandidate] | None:
+    """Rerank via the Vertex AI Ranking API (Discovery Engine rank service).
+
+    Returns the re-scored, re-sorted candidates, or None on failure so the caller
+    can fall back to the local cross-encoder.
+    """
+    try:
+        from google.cloud import discoveryengine_v1 as discoveryengine
+
+        project = os.environ["GOOGLE_CLOUD_PROJECT"]
+        client = discoveryengine.RankServiceClient()
+        ranking_config = client.ranking_config_path(
+            project=project, location="global", ranking_config="default_ranking_config"
+        )
+        records = [
+            discoveryengine.RankingRecord(
+                id=str(i),
+                # Figures have no real text — fall back to their heading/caption.
+                content=(candidate.content or candidate.metadata.get("heading_path", ""))[:8000],
+            )
+            for i, candidate in enumerate(candidates)
+        ]
+        response = client.rank(
+            request=discoveryengine.RankRequest(
+                ranking_config=ranking_config,
+                model=VERTEX_RANKER_MODEL,
+                query=query,
+                records=records,
+            )
+        )
+        for record in response.records:
+            candidates[int(record.id)].rerank_score = float(record.score)
+        return sorted(candidates, key=lambda item: item.final_score, reverse=True)
+    except Exception as exc:
+        print(f"[Retrieval] Vertex rerank skipped: {exc}")
+        return None
+
+
+def format_docs_with_parents(candidates: Iterable[RetrievalCandidate]) -> str:
+    """Format retrieved candidates for the LLM, expanding each child to its full
+    parent SECTION.
+
+    Sections are emitted in the children's rank order and deduplicated by
+    ``parent_id`` so the LLM sees each relevant section once, whole — giving it
+    the surrounding context the matched snippet lives in. Falls back to the
+    child's own content when a parent section isn't recorded (older index).
+    """
+    blocks: list[str] = []
+    seen: set[str] = set()
+    index = 0
+    for candidate in candidates:
+        parent_id = candidate.metadata.get("parent_id")
+        parent_content = candidate.metadata.get("parent_content")
+        if parent_id and parent_id in seen:
+            continue
+        if parent_id:
+            seen.add(parent_id)
+        index += 1
         source = candidate.metadata.get("source", "unknown")
         title = candidate.metadata.get("title", "untitled")
         kind = candidate.metadata.get("kind", "document")
-        score = candidate.final_score
+        body = parent_content or candidate.content
         blocks.append(
             "\n".join(
                 [
-                    f"[{index}] Source: {source} | Title: {title} | Kind: {kind} | Score: {score:.4f}",
-                    candidate.content,
+                    f"[{index}] Source: {source} | Title: {title} | Kind: {kind} | Score: {candidate.final_score:.4f}",
+                    body,
                 ]
             )
         )
@@ -391,6 +411,8 @@ def search_metadata(candidates: Iterable[RetrievalCandidate], content_limit: int
             "title": candidate.metadata.get("title", "untitled"),
             "kind": candidate.metadata.get("kind", "document"),
             "images": candidate.metadata.get("images", []),
+            "parent_id": candidate.metadata.get("parent_id", ""),
+            "parent_content": candidate.metadata.get("parent_content", ""),
             "dense_score": candidate.dense_score,
             "bm25_score": candidate.bm25_score,
             "rerank_score": candidate.rerank_score,
@@ -433,24 +455,6 @@ def _load_corpus(corpus_path: Path = CORPUS_PATH) -> list[RetrievalCandidate]:
                 )
             )
     return corpus
-
-
-def _qdrant_query(client, query_vector: list[float], collection_name: str = COLLECTION_NAME):
-    try:
-        response = client.query_points(
-            collection_name=collection_name,
-            query=query_vector,
-            limit=DENSE_SEARCH_K,
-            with_payload=True,
-        )
-        return response.points
-    except AttributeError:
-        return client.search(
-            collection_name=collection_name,
-            query_vector=query_vector,
-            limit=DENSE_SEARCH_K,
-            with_payload=True,
-        )
 
 
 @lru_cache(maxsize=1)
@@ -582,6 +586,31 @@ def _cache_key(query: str, top_k: int, channel: str = DEFAULT_CHANNEL) -> str:
     normalized = re.sub(r"\s+", " ", query.strip().lower())
     digest = hashlib.sha256(normalized.encode()).hexdigest()[:16]
     return f"rag:retrieval:{channel}:{top_k}:{digest}"
+
+
+def invalidate_channel_cache(channel: str = DEFAULT_CHANNEL) -> None:
+    """Drop every cached retrieval result for a channel.
+
+    Called after a channel's index changes (add / delete / @update reindex) so a
+    fresh chat with a previously-asked question retrieves the UPDATED corpus
+    instead of stale pre-update candidates that would otherwise live for the
+    ``RETRIEVAL_CACHE_TTL_SECONDS`` window.
+    """
+    prefix = f"rag:retrieval:{channel}:"
+
+    # In-process memory cache (used when Redis is unavailable).
+    for key in [k for k in _RETRIEVAL_MEMORY_CACHE if k.startswith(prefix)]:
+        _RETRIEVAL_MEMORY_CACHE.pop(key, None)
+
+    client = _load_redis_client()
+    if client is None:
+        return
+    try:
+        stale = list(client.scan_iter(match=f"{prefix}*"))
+        if stale:
+            client.delete(*stale)
+    except Exception as exc:
+        print(f"[Retrieval] cache invalidation failed for {channel}: {exc}")
 
 
 def _cache_ttl_seconds() -> int:

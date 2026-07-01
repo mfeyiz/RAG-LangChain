@@ -48,6 +48,24 @@ def _image_blocks(state: AgentState) -> list[dict]:
     return blocks[:_MAX_IMAGES]
 
 
+def _figure_catalogue(state: AgentState) -> str:
+    """A numbered list of the retrieved figures the writer may embed inline, each
+    with the same-origin URL the frontend serves it from. Empty when there are
+    no context figures (e.g. only user-attached images)."""
+    lines: list[str] = []
+    for img in state.get("context_images") or []:
+        name = img.get("name", "")
+        source = img.get("source", "")
+        channel = img.get("channel", "workspace")
+        if not name:
+            continue
+        url = f"/images/{channel}/{paths.stem_of(source)}/{name}"
+        lines.append(f"- {name} (from {source}) -> {url}")
+        if len(lines) >= _MAX_IMAGES:
+            break
+    return "\n".join(lines)
+
+
 WRITER_SYSTEM_PROMPT = """You are a document-grounded QA assistant. Prepare an accurate response to the user's question using the provided top-5 retrieved context.
 
 Rules:
@@ -70,6 +88,15 @@ Rules:
 - Write your response in a clear and structured way."""
 
 
+WRITER_FAST_TRACK_PROMPT = """You are a friendly assistant answering a SIMPLE question or greeting that does not require searching the document store.
+
+Rules:
+- Answer briefly and naturally from general knowledge.
+- No bracket-number citations — there is no retrieved context to cite.
+- Be polite and professional in social interactions like greetings.
+- Respond in the same language as the user's query."""
+
+
 _NO_DOCS_REPLY = (
     "I could not find any relevant information in the knowledge base to answer your question. "
     "Please rephrase your query or ask about topics covered by the available documents."
@@ -88,17 +115,27 @@ async def writer_node(state: AgentState) -> dict:
         has_user_images = bool(state.get("query_images"))
 
         if researcher_ran and no_docs and not is_revision and not has_user_images:
-            await trace_event(state["trace_id"], "writer.no_docs", {"query": state["query"]})
-            span.update(output={"no_docs": True})
-            print("[Writer] No documents found — returning early.")
-            return {
-                "final_response": _NO_DOCS_REPLY,
-                "draft_response": _NO_DOCS_REPLY,
-                "messages": [AIMessage(content=_NO_DOCS_REPLY)],
-            }
+            # Fast-track (simple) questions deliberately bypass the researcher —
+            # in that case "no docs" is expected, not an error: let the model
+            # answer from general knowledge below.
+            if not state.get("fast_track"):
+                await trace_event(state["trace_id"], "writer.no_docs", {"query": state["query"]})
+                span.update(output={"no_docs": True})
+                print("[Writer] No documents found — returning early.")
+                return {
+                    "final_response": _NO_DOCS_REPLY,
+                    "draft_response": _NO_DOCS_REPLY,
+                    "messages": [AIMessage(content=_NO_DOCS_REPLY)],
+                }
+            print("[Writer] Fast-track: answering from general knowledge (no retrieval).")
 
         is_web = state.get("source_type") == "web"
-        system_prompt = WRITER_WEB_SYSTEM_PROMPT if is_web else WRITER_SYSTEM_PROMPT
+        if state.get("fast_track") and not research:
+            system_prompt = WRITER_FAST_TRACK_PROMPT
+        elif is_web:
+            system_prompt = WRITER_WEB_SYSTEM_PROMPT
+        else:
+            system_prompt = WRITER_SYSTEM_PROMPT
         messages = [SystemMessage(content=system_prompt)]
 
         user_content = f"Question: {state['query']}"
@@ -123,6 +160,17 @@ async def writer_node(state: AgentState) -> dict:
         # keep the cheaper text model and a plain string message.
         image_blocks = _image_blocks(state)
         if image_blocks:
+            # Let the model embed a relevant figure inline in its answer (the UI
+            # renders ![](/images/...) as an <img>), so a chart shows up right
+            # where it is discussed rather than only as a thumbnail strip.
+            catalogue = _figure_catalogue(state)
+            if catalogue:
+                user_content += (
+                    "\n\nAVAILABLE FIGURES (you may embed a relevant one inline using "
+                    "Markdown image syntax, e.g. `![short caption](/images/...)`, at the point "
+                    "in your answer where it is discussed — only embed figures listed here, and "
+                    f"only when genuinely relevant):\n{catalogue}"
+                )
             llm = get_vision_llm()
             messages.append(
                 HumanMessage(content=[{"type": "text", "text": user_content}, *image_blocks])
@@ -151,7 +199,8 @@ async def writer_node(state: AgentState) -> dict:
         # When reviewer is enabled, return only the draft so the reviewer can
         # check it. When disabled (default), the draft is the final answer —
         # set final_response so the supervisor finishes without an extra LLM call.
-        if _REVIEWER_ENABLED:
+        # Fast-track questions bypass the reviewer entirely even when it is on.
+        if _REVIEWER_ENABLED and not state.get("fast_track"):
             return {
                 "draft_response": draft,
                 "messages": [AIMessage(content="Response draft prepared.")],
