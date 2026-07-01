@@ -48,6 +48,7 @@ dependencies = [
     "matplotlib>=3.8.0",
     # Git-backed workspace version control: @update → commit, restore.
     "GitPython>=3.1.0",
+    "python-docx>=1.1.2",
 ]
 
 [dependency-groups]

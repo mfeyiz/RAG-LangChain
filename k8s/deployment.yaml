@@ -59,10 +59,14 @@ spec:
                   key: LANGFUSE_SECRET_KEY
             - name: LANGFUSE_ENABLED
               value: "1"
+            - name: LLM_BASE_URL
+              value: "https://opencode.ai/zen/go/v1"
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/var/secrets/google/google-credentials.json"
             - name: RAG_ENABLE_RERANKER
               value: "1"
             - name: LLM_MODEL
-              value: "deepseek/deepseek-v4-flash"
+              value: "deepseek-v4-flash"
             - name: TAVILY_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -130,6 +134,9 @@ spec:
             - name: rag-data
               mountPath: /app/RAG/vector_db
               subPath: vector_db
+            - name: google-cloud-key
+              mountPath: /var/secrets/google
+              readOnly: true
       volumes:
         - name: model-cache
           persistentVolumeClaim:
@@ -137,3 +144,9 @@ spec:
         - name: rag-data
           persistentVolumeClaim:
             claimName: rag-data-pvc
+        - name: google-cloud-key
+          secret:
+            secretName: rag-langchain-secrets
+            items:
+              - key: google-credentials.json
+                path: google-credentials.json

@@ -84,13 +84,15 @@ def commit_change(source: str, summary: str) -> str | None:
         return None
 
     stem = paths.stem_of(source)
-    # Track the doc's markdown, its regenerated PDF, its figures, and tables.
-    patterns = [
-        f"markdown/{source}",
-        f"pdf/{stem}.pdf",
-        f"images/{stem}",
-        f"tables/{stem}",
-    ]
+    # Track the doc's markdown, its regenerated PDF, its figures, and tables (only if they exist).
+    patterns = []
+    for rel in (f"markdown/{source}", f"pdf/{stem}.pdf", f"images/{stem}", f"tables/{stem}"):
+        if (paths.WORKSPACE_MD_DIR.parent / rel).exists():
+            patterns.append(rel)
+
+    if not patterns:
+        return None
+
     try:
         repo.git.add("--", *patterns)
     except Exception as exc:

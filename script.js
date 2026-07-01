@@ -28,12 +28,23 @@ const chatView          = document.getElementById("chatView");
 const libraryView       = document.getElementById("libraryView");
 const tabChat           = document.getElementById("tabChat");
 const tabLibrary        = document.getElementById("tabLibrary");
+const tabEditor         = document.getElementById("tabEditor");
 const libraryList       = document.getElementById("libraryList");
 const libraryCountTag   = document.getElementById("libraryCountTag");
 const libraryViewTabs   = document.getElementById("libraryViewTabs");
 const libraryDocTitle   = document.getElementById("libraryDocTitle");
 const libraryDocBody    = document.getElementById("libraryDocBody");
 const libraryDownloads  = document.getElementById("libraryDownloads");
+const editorView        = document.getElementById("editorView");
+const editorFileList    = document.getElementById("editorFileList");
+const editorCountTag    = document.getElementById("editorCountTag");
+const editorPage        = document.getElementById("editorPage");
+const editorToolbar     = document.getElementById("editorToolbar");
+const editorSaveStatus  = document.getElementById("editorSaveStatus");
+const editorChatForm    = document.getElementById("editorChatForm");
+const editorUserInput   = document.getElementById("editorUserInput");
+const editorSendButton  = document.getElementById("editorSendButton");
+const editorDownloadDocx = document.getElementById("editorDownloadDocx");
 const attachButton      = document.getElementById("attachButton");
 const imageInput        = document.getElementById("imageInput");
 const attachPreview     = document.getElementById("attachPreview");
@@ -146,6 +157,7 @@ async function sendMessage() {
     if (!message || sendButton.disabled) return;
     userInput.value = "";
     autoResize();
+    querySource = "chat";
     runQuery(message);
 }
 
@@ -263,6 +275,16 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
                 if (payload) {
                     streamingStarted = true;
                     awaitingEditApproval = true;
+                    
+                    // If editor view is active and matches current source, try inline diff
+                    if (!editorView.hidden && editorDoc && (payload.file === editorDoc.source || payload.source === editorDoc.source)) {
+                        const inlineOk = showInlineEditPreview(payload);
+                        if (inlineOk) {
+                            logEvent("editor", `Değişiklik önizlemesi editör sayfasında hazır (${payload.file || ""}).`);
+                            continue;
+                        }
+                    }
+                    
                     showEditPreview(botMessageDiv, payload);
                 }
             }
@@ -815,6 +837,7 @@ renderAuthState();
 
 tabChat.addEventListener("click", () => switchTab("chat"));
 tabLibrary.addEventListener("click", () => switchTab("library"));
+tabEditor.addEventListener("click", () => switchTab("editor"));
 libraryViewTabs.addEventListener("click", (e) => {
     const btn = e.target.closest(".lib-vtab");
     if (btn) renderDocView(btn.dataset.view);
@@ -865,6 +888,7 @@ async function uploadFile(file) {
         logEvent("upload", `${data.filename} → ${data.chunks_added} chunk eklendi.`);
         loadDocumentList();
         loadLibrary();
+        loadEditorFileList();
     } catch (err) {
         showUploadStatus(`Yükleme başarısız: ${err.message}`, "error");
     }
@@ -967,22 +991,53 @@ async function deleteDocument(source, rowEl) {
 ═══════════════════════════════════════════════════════════════ */
 let libraryDoc = null;   // { source, original, workspace, original_url, workspace_pdf_url }
 let libraryView_ = "workspace";
+let editorDoc = null;    // { source, markdown }
 
 function switchTab(tab) {
-    const isLibrary = tab === "library";
-    chatView.hidden = isLibrary;
-    libraryView.hidden = !isLibrary;
-    tabChat.classList.toggle("is-active", !isLibrary);
-    tabLibrary.classList.toggle("is-active", isLibrary);
-    if (isLibrary) loadLibrary();
+    chatView.hidden = tab !== "chat";
+    libraryView.hidden = tab !== "library";
+    editorView.hidden = tab !== "editor";
+    
+    tabChat.classList.toggle("is-active", tab === "chat");
+    tabLibrary.classList.toggle("is-active", tab === "library");
+    tabEditor.classList.toggle("is-active", tab === "editor");
+    
+    if (tab === "library") {
+        loadLibrary();
+    } else if (tab === "editor") {
+        loadEditorFileList();
+    }
+}
+
+async function fetchWorkspaceDocs() {
+    const res  = await fetch(`${ADMIN_DOCS_URL}?channel=workspace`, { headers: authHeaders() });
+    if (!res.ok) throw new Error("fetch failed");
+    const data = await res.json();
+    return data.documents || [];
+}
+
+function renderDocRows(container, docs, activeSource, onSelect) {
+    container.innerHTML = "";
+    docs.forEach((doc) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "library-row";
+        row.dataset.source = doc.source;
+        if (activeSource === doc.source) row.classList.add("is-active");
+        row.innerHTML = `
+            <span class="material-symbols-outlined">description</span>
+            <span class="library-row-text">
+                <span class="library-row-name">${escapeHtml(doc.source)}</span>
+                <span class="library-row-meta">${doc.chunks} chunk</span>
+            </span>`;
+        row.addEventListener("click", () => onSelect(doc.source));
+        container.appendChild(row);
+    });
 }
 
 async function loadLibrary() {
     try {
-        const res  = await fetch(`${ADMIN_DOCS_URL}?channel=workspace`, { headers: authHeaders() });
-        const data = await res.json();
-        const docs = data.documents || [];
-
+        const docs = await fetchWorkspaceDocs();
         libraryCountTag.textContent = String(docs.length);
         if (!docs.length) {
             libraryList.innerHTML = `
@@ -992,28 +1047,32 @@ async function loadLibrary() {
                 </div>`;
             return;
         }
-
-        libraryList.innerHTML = "";
-        docs.forEach((doc) => {
-            const row = document.createElement("button");
-            row.type = "button";
-            row.className = "library-row";
-            row.dataset.source = doc.source;
-            if (libraryDoc && libraryDoc.source === doc.source) row.classList.add("is-active");
-            row.innerHTML = `
-                <span class="material-symbols-outlined">description</span>
-                <span class="library-row-text">
-                    <span class="library-row-name">${escapeHtml(doc.source)}</span>
-                    <span class="library-row-meta">${doc.chunks} chunk</span>
-                </span>`;
-            row.addEventListener("click", () => selectDoc(doc.source));
-            libraryList.appendChild(row);
-        });
+        renderDocRows(libraryList, docs, libraryDoc ? libraryDoc.source : null, selectDoc);
     } catch {
         libraryCountTag.textContent = "!";
         libraryList.innerHTML = `<div class="empty-state"><p>Belgeler yüklenemedi.</p></div>`;
     }
 }
+
+async function loadEditorFileList() {
+    try {
+        const docs = await fetchWorkspaceDocs();
+        editorCountTag.textContent = String(docs.length);
+        if (!docs.length) {
+            editorFileList.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                </div>`;
+            return;
+        }
+        renderDocRows(editorFileList, docs, editorDoc ? editorDoc.source : null, selectEditorDoc);
+    } catch {
+        editorCountTag.textContent = "!";
+        editorFileList.innerHTML = `<div class="empty-state"><p>Belgeler yüklenemedi.</p></div>`;
+    }
+}
+
 
 async function selectDoc(source) {
     libraryDocTitle.textContent = source;
@@ -1037,6 +1096,7 @@ async function selectDoc(source) {
             workspace: ws.markdown || "",
             original_url: orig.original_url || "",
             workspace_pdf_url: ws.workspace_pdf_url || "",
+            workspace_docx_url: ws.workspace_docx_url || "",
         };
 
         let dl = "";
@@ -1044,6 +1104,8 @@ async function selectDoc(source) {
             dl += `<a class="ghost-button" href="${libraryDoc.original_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">picture_as_pdf</span> Orijinal</a>`;
         if (libraryDoc.workspace_pdf_url)
             dl += `<a class="ghost-button" href="${libraryDoc.workspace_pdf_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">download</span> Güncel PDF</a>`;
+        if (libraryDoc.workspace_docx_url)
+            dl += `<a class="ghost-button" href="${libraryDoc.workspace_docx_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">description</span> Güncel Word</a>`;
         libraryDownloads.innerHTML = dl;
 
         renderDocView(libraryView_);
@@ -1099,6 +1161,10 @@ function renderMarkdown(md) {
         .replace(/!\[([^\]]*)\]\((\/images\/[^)\s]+)\)/g, '<img src="$2" alt="$1" loading="lazy" class="answer-image">')
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+        .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+        .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, "<u>$1</u>")
+        .replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, "<mark>$1</mark>")
+        .replace(/&lt;mark\s+style=&quot;background:\s*([^&;]+);?&quot;&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark style="background: $1;">$2</mark>')
         .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
     for (const raw of lines) {
@@ -1807,6 +1873,611 @@ newSessionButton.addEventListener("click", () => {
     logEvent("idle", "Yeni oturum başlatıldı.");
     userInput.focus();
 });
+
+/* ══════════════════════════════════════════════════════════════
+   EDITOR TAB - RICH TEXT WYSIWYG & CHAT ACTIONS
+   ═══════════════════════════════════════════════════════════════ */
+let editorZoom = 1.0;
+let querySource = "chat";
+
+// Auto resize for editor composer
+function autoResizeEditorInput() {
+    editorUserInput.style.height = "auto";
+    editorUserInput.style.height = `${editorUserInput.scrollHeight}px`;
+}
+editorUserInput.addEventListener("input", autoResizeEditorInput);
+
+// Zoom controls
+function updateZoom() {
+    editorPage.style.setProperty("--editor-zoom", editorZoom);
+    document.getElementById("editorZoomVal").textContent = `${Math.round(editorZoom * 100)}%`;
+}
+
+document.getElementById("editorZoomOut").addEventListener("click", () => {
+    editorZoom = Math.max(0.5, editorZoom - 0.1);
+    updateZoom();
+});
+
+document.getElementById("editorZoomIn").addEventListener("click", () => {
+    editorZoom = Math.min(2.0, editorZoom + 0.1);
+    updateZoom();
+});
+
+// toolbar data-cmd buttons
+document.querySelectorAll("#editorToolbar .toolbar-btn[data-cmd]").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // maintain text selection
+        const cmd = btn.dataset.cmd;
+        document.execCommand(cmd, false, null);
+        btn.classList.toggle("is-active", document.queryCommandState(cmd));
+        triggerAutoSave();
+    });
+});
+
+// Headings select
+document.getElementById("editorHeadingSelect").addEventListener("change", (e) => {
+    const tag = e.target.value;
+    document.execCommand("formatBlock", false, tag);
+    triggerAutoSave();
+});
+
+// Highlight Popover
+const editorHighlightBtn = document.getElementById("editorHighlightBtn");
+const editorHighlightPopover = document.getElementById("editorHighlightPopover");
+
+editorHighlightBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    editorHighlightPopover.hidden = !editorHighlightPopover.hidden;
+});
+
+document.addEventListener("click", () => {
+    if (editorHighlightPopover) editorHighlightPopover.hidden = true;
+});
+
+document.querySelectorAll(".color-swatch").forEach((swatch) => {
+    swatch.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const color = swatch.dataset.color;
+        if (color === "clear") {
+            document.execCommand("removeFormat", false, null);
+        } else {
+            const colorMap = {
+                yellow: "#fef08a",
+                green: "#bbf7d0",
+                blue: "#bfdbfe",
+                red: "#fecaca"
+            };
+            document.execCommand("hiliteColor", false, colorMap[color]);
+        }
+        editorHighlightPopover.hidden = true;
+        triggerAutoSave();
+    });
+});
+
+// Add Chart action
+document.getElementById("editorAddChartBtn").addEventListener("click", () => {
+    editorUserInput.value = "@update bu bölüme bir grafik ekle: [Tablo ismi]";
+    editorUserInput.focus();
+    autoResizeEditorInput();
+});
+
+// HTML ⇄ Markdown conversion
+function htmlToMarkdown(container) {
+    let md = "";
+    for (const child of container.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+            const text = child.textContent.trim();
+            if (text) md += text + "\n\n";
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+            const tagName = child.tagName.toLowerCase();
+            if (/^h[1-6]$/.test(tagName)) {
+                const level = parseInt(tagName[1]);
+                md += "#".repeat(level) + " " + inlineHtmlToMarkdown(child) + "\n\n";
+            } else if (tagName === "p" || tagName === "div") {
+                const text = inlineHtmlToMarkdown(child);
+                if (text) md += text + "\n\n";
+            } else if (tagName === "ul") {
+                for (const li of child.querySelectorAll("li")) {
+                    md += "- " + inlineHtmlToMarkdown(li) + "\n";
+                }
+                md += "\n";
+            } else if (tagName === "ol") {
+                let idx = 1;
+                for (const li of child.querySelectorAll("li")) {
+                    md += `${idx}. ` + inlineHtmlToMarkdown(li) + "\n";
+                    idx++;
+                }
+                md += "\n";
+            } else if (tagName === "blockquote") {
+                const text = inlineHtmlToMarkdown(child);
+                if (text) {
+                    const lines = text.split("\n").map(l => "> " + l).join("\n");
+                    md += lines + "\n\n";
+                }
+            } else if (tagName === "pre") {
+                const code = child.querySelector("code");
+                const text = code ? code.textContent : child.textContent;
+                md += "```\n" + text.trim() + "\n```\n\n";
+            } else if (tagName === "table") {
+                const rows = child.querySelectorAll("tr");
+                if (rows.length > 0) {
+                    let tableMd = "";
+                    rows.forEach((row, rIdx) => {
+                        const cells = row.querySelectorAll("td, th");
+                        const cellTexts = Array.from(cells).map(cell => inlineHtmlToMarkdown(cell).replace(/\|/g, "\\|"));
+                        tableMd += "| " + cellTexts.join(" | ") + " |\n";
+                        if (rIdx === 0) {
+                            tableMd += "| " + cellTexts.map(() => "---").join(" | ") + " |\n";
+                        }
+                    });
+                    md += tableMd + "\n";
+                }
+            } else if (tagName === "hr") {
+                md += "---\n\n";
+            } else {
+                const text = inlineHtmlToMarkdown(child);
+                if (text) md += text + "\n\n";
+            }
+        }
+    }
+    return md.trim();
+}
+
+function inlineHtmlToMarkdown(node) {
+    let text = "";
+    for (const child of node.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+            text += child.textContent;
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+            const tagName = child.tagName.toLowerCase();
+            const inner = inlineHtmlToMarkdown(child);
+            if (tagName === "br") {
+                text += "\n";
+            } else if (tagName === "strong" || tagName === "b") {
+                text += `**${inner}**`;
+            } else if (tagName === "em" || tagName === "i") {
+                text += `*${inner}*`;
+            } else if (tagName === "u") {
+                text += `<u>${inner}</u>`;
+            } else if (tagName === "mark") {
+                text += `<mark>${inner}</mark>`;
+            } else if (tagName === "del" || tagName === "strike" || tagName === "s") {
+                text += `~~${inner}~~`;
+            } else if (tagName === "code") {
+                text += `\`${inner}\``;
+            } else if (tagName === "a") {
+                const href = child.getAttribute("href") || "";
+                text += `[${inner}](${href})`;
+            } else if (tagName === "img") {
+                const alt = child.getAttribute("alt") || "";
+                let src = child.getAttribute("src") || "";
+                if (src.includes("/")) {
+                    const parts = src.split("/");
+                    src = parts[parts.length - 1];
+                }
+                text += `![${alt}](${src})`;
+            } else {
+                text += inner;
+            }
+        }
+    }
+    return text;
+}
+
+// Auto-save debounced handler
+let autoSaveTimer = null;
+
+function triggerAutoSave() {
+    if (!editorDoc) return;
+    setEditorSaveStatus("dirty");
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(async () => {
+        await runAutoSave();
+    }, 1200);
+}
+
+async function runAutoSave() {
+    if (!editorDoc) return;
+    setEditorSaveStatus("saving");
+    const source = editorDoc.source;
+    const currentMd = htmlToMarkdown(editorPage);
+    try {
+        const res = await fetch(`/documents/${encodeURIComponent(source)}/save`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ markdown: currentMd })
+        });
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || "Kaydedilemedi.");
+        }
+        const data = await res.json();
+        editorDoc.markdown = currentMd;
+        setEditorSaveStatus("saved");
+    } catch (err) {
+        console.error("Auto-save failed:", err);
+        setEditorSaveStatus("error", err.message);
+    }
+}
+
+function setEditorSaveStatus(state, errMsg = "") {
+    editorSaveStatus.className = `editor-save-pill ${state}`;
+    const textEl = editorSaveStatus.querySelector(".status-text");
+    editorSaveStatus.hidden = false;
+    if (state === "saved") {
+        textEl.textContent = "Kaydedildi";
+        setTimeout(() => {
+            if (editorSaveStatus.classList.contains("saved")) {
+                editorSaveStatus.hidden = true;
+            }
+        }, 3000);
+    } else if (state === "saving") {
+        textEl.textContent = "Kaydediliyor…";
+    } else if (state === "dirty") {
+        textEl.textContent = "Kaydedilmemiş değişiklikler var";
+    } else if (state === "error") {
+        textEl.textContent = `Hata: ${errMsg || "Kaydedilemedi"}`;
+    }
+}
+
+// Attach listeners for contenteditable changes
+editorPage.addEventListener("input", () => {
+    triggerAutoSave();
+});
+
+// Inline diff helpers
+function _normHeading(text) {
+    return text.replace(/^#+\s*/, "").replace(/\s*#+\s*$/, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function getHeadingChain(headingEl, allHeadings) {
+    const elLevel = parseInt(headingEl.tagName[1]);
+    const chain = [headingEl];
+    let currentLevel = elLevel;
+    const idx = allHeadings.indexOf(headingEl);
+    for (let i = idx - 1; i >= 0; i--) {
+        const otherLevel = parseInt(allHeadings[i].tagName[1]);
+        if (otherLevel < currentLevel) {
+            chain.unshift(allHeadings[i]);
+            currentLevel = otherLevel;
+            if (otherLevel === 1) break;
+        }
+    }
+    return chain.map(h => _normHeading(h.textContent));
+}
+
+function extractMarkdownSection(md, heading_path) {
+    if (!heading_path) return md;
+    const components = heading_path.split(">").map(_normHeading);
+    const targetHeadingNorm = components[components.length - 1];
+    const lines = md.split("\n");
+    
+    const headings = [];
+    for (let i = 0; i < lines.length; i++) {
+        const m = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+        if (m) {
+            headings.push({ idx: i, level: m[1].length, text: _normHeading(m[2]) });
+        }
+    }
+    
+    const candidates = headings.filter(h => h.text === targetHeadingNorm);
+    if (!candidates.length) return null;
+    
+    let chosen = candidates[0];
+    for (const cand of candidates) {
+        const chain = [cand];
+        let curLevel = cand.level;
+        const candPos = headings.indexOf(cand);
+        for (let j = candPos - 1; j >= 0; j--) {
+            if (headings[j].level < curLevel) {
+                chain.unshift(headings[j]);
+                curLevel = headings[j].level;
+                if (curLevel === 1) break;
+            }
+        }
+        const chainTexts = chain.map(h => h.text);
+        if (JSON.stringify(chainTexts) === JSON.stringify(components)) {
+            chosen = cand;
+            break;
+        }
+    }
+    
+    const startIdx = chosen.idx;
+    let endIdx = lines.length;
+    const candPos = headings.indexOf(chosen);
+    for (let j = candPos + 1; j < headings.length; j++) {
+        if (headings[j].level <= chosen.level) {
+            endIdx = headings[j].idx;
+            break;
+        }
+    }
+    return lines.slice(startIdx, endIdx).join("\n");
+}
+
+function showInlineEditPreview(payload) {
+    const heading_path = payload.heading_path || "";
+    const headings = Array.from(editorPage.querySelectorAll("h1, h2, h3, h4, h5, h6"));
+    const components = heading_path.split(">").map(_normHeading);
+    const targetHeadingNorm = components[components.length - 1];
+    
+    let targetHeadingEl = null;
+    for (const h of headings) {
+        if (_normHeading(h.textContent) === targetHeadingNorm) {
+            const chain = getHeadingChain(h, headings);
+            if (JSON.stringify(chain) === JSON.stringify(components)) {
+                targetHeadingEl = h;
+                break;
+            }
+        }
+    }
+    if (!targetHeadingEl && targetHeadingNorm) {
+        targetHeadingEl = headings.find(h => _normHeading(h.textContent) === targetHeadingNorm);
+    }
+    if (!targetHeadingEl) return false;
+    
+    const targetLevel = parseInt(targetHeadingEl.tagName[1]);
+    const sectionNodes = [targetHeadingEl];
+    let next = targetHeadingEl.nextElementSibling;
+    while (next) {
+        if (/^h[1-6]$/.test(next.tagName.toLowerCase())) {
+            const nextLevel = parseInt(next.tagName[1]);
+            if (nextLevel <= targetLevel) break;
+        }
+        sectionNodes.push(next);
+        next = next.nextElementSibling;
+    }
+    
+    const beforeSectionMd = extractMarkdownSection(payload.before, heading_path);
+    const afterSectionMd = extractMarkdownSection(payload.after, heading_path);
+    if (beforeSectionMd === null || afterSectionMd === null) return false;
+    
+    const diffWrapper = document.createElement("div");
+    diffWrapper.className = "inline-diff-section";
+    diffWrapper.contentEditable = "false";
+    
+    const diffRows = diffLines(beforeSectionMd.split("\n"), afterSectionMd.split("\n"));
+    diffRows.forEach((row) => {
+        const line = document.createElement("div");
+        if (row.type === "added") {
+            line.className = "inline-diff-line inline-diff-added";
+            line.textContent = "+" + (row.right || "");
+        } else if (row.type === "removed") {
+            line.className = "inline-diff-line inline-diff-removed";
+            line.textContent = "-" + (row.left || "");
+        } else {
+            line.className = "inline-diff-line inline-diff-same";
+            line.textContent = row.right || "";
+        }
+        diffWrapper.appendChild(line);
+    });
+    
+    const actions = document.createElement("div");
+    actions.className = "inline-diff-actions";
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "primary-button";
+    approveBtn.innerHTML = `<span class="material-symbols-outlined">check</span> Onayla`;
+    const rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "ghost-button";
+    rejectBtn.innerHTML = `<span class="material-symbols-outlined">close</span> Reddet`;
+    actions.appendChild(rejectBtn);
+    actions.appendChild(approveBtn);
+    diffWrapper.appendChild(actions);
+    
+    const parent = targetHeadingEl.parentNode;
+    parent.insertBefore(diffWrapper, targetHeadingEl);
+    sectionNodes.forEach(node => parent.removeChild(node));
+    
+    approveBtn.addEventListener("click", async () => {
+        approveBtn.disabled = true; rejectBtn.disabled = true;
+        try {
+            const res = await fetch("/update/apply", {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ token: payload.token }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Onay başarısız.");
+            
+            const tempDiv = document.createElement("div");
+            tempDiv.innerHTML = renderMarkdown(afterSectionMd);
+            while (tempDiv.firstChild) {
+                diffWrapper.parentNode.insertBefore(tempDiv.firstChild, diffWrapper);
+            }
+            diffWrapper.parentNode.removeChild(diffWrapper);
+            
+            editorDoc.markdown = payload.after;
+            setEditorSaveStatus("saved");
+            
+            addMessage(data.reply, "assistant");
+            loadLibrary();
+            loadEditorFileList();
+        } catch (err) {
+            alert(`Hata: ${err.message}`);
+            approveBtn.disabled = false; rejectBtn.disabled = false;
+        }
+    });
+    
+    rejectBtn.addEventListener("click", async () => {
+        approveBtn.disabled = true; rejectBtn.disabled = true;
+        try {
+            await fetch("/update/reject", {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ token: payload.token }),
+            });
+        } catch { /* ignored */ }
+        
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = renderMarkdown(beforeSectionMd);
+        while (tempDiv.firstChild) {
+            diffWrapper.parentNode.insertBefore(tempDiv.firstChild, diffWrapper);
+        }
+        diffWrapper.parentNode.removeChild(diffWrapper);
+        
+        loadLibrary();
+        loadEditorFileList();
+    });
+    
+    return true;
+}
+
+// Show whole document diff for direct edit-chat suggestions
+function showWholeDocumentDiff(beforeMd, afterMd) {
+    editorPage.contentEditable = "false";
+    
+    // Clear and create a diff container inside the editor page
+    editorPage.innerHTML = "";
+    const diffContainer = document.createElement("div");
+    diffContainer.className = "whole-document-diff";
+    
+    const diffRows = diffLines(beforeMd.split("\n"), afterMd.split("\n"));
+    
+    diffRows.forEach((row) => {
+        const line = document.createElement("div");
+        if (row.type === "added") {
+            line.className = "inline-diff-line inline-diff-added";
+            line.textContent = "+" + (row.right || "");
+        } else if (row.type === "removed") {
+            line.className = "inline-diff-line inline-diff-removed";
+            line.textContent = "-" + (row.left || "");
+        } else {
+            line.className = "inline-diff-line inline-diff-same";
+            line.textContent = row.right || "";
+        }
+        diffContainer.appendChild(line);
+    });
+    
+    editorPage.appendChild(diffContainer);
+    
+    // Create floating actions bar at the bottom of the editor page wrapper
+    let actions = document.getElementById("editorDiffActionsBar");
+    if (!actions) {
+        actions = document.createElement("div");
+        actions.id = "editorDiffActionsBar";
+        actions.className = "editor-diff-actions-bar";
+        editorPage.parentNode.insertBefore(actions, editorPage.nextSibling);
+    }
+    
+    actions.innerHTML = `
+        <span class="diff-bar-text">Yapay zeka değişiklikleri önerdi. Değişiklikleri inceleyin:</span>
+        <div class="diff-bar-buttons">
+            <button class="primary-button" id="editorApproveDiffBtn" type="button"><span class="material-symbols-outlined">check</span> Değişiklikleri Onayla</button>
+            <button class="ghost-button" id="editorRejectDiffBtn" type="button"><span class="material-symbols-outlined">close</span> Geri Al (Reddet)</button>
+        </div>
+    `;
+    actions.hidden = false;
+    
+    document.getElementById("editorApproveDiffBtn").onclick = async () => {
+        editorDoc.markdown = afterMd;
+        editorPage.innerHTML = renderMarkdown(afterMd);
+        editorPage.contentEditable = "true";
+        actions.hidden = true;
+        
+        await runAutoSave();
+        loadLibrary();
+        loadEditorFileList();
+    };
+    
+    document.getElementById("editorRejectDiffBtn").onclick = () => {
+        editorPage.innerHTML = renderMarkdown(beforeMd);
+        editorPage.contentEditable = "true";
+        actions.hidden = true;
+    };
+}
+
+// Send editor message handler (direct edit-chat call)
+async function sendEditorMessage() {
+    const message = editorUserInput.value.trim();
+    if (!message || editorSendButton.disabled) return;
+    if (!editorDoc) return;
+    
+    editorUserInput.value = "";
+    autoResizeEditorInput();
+    
+    const currentMd = htmlToMarkdown(editorPage);
+    
+    editorUserInput.disabled = true;
+    editorSendButton.disabled = true;
+    
+    const originalContent = editorPage.innerHTML;
+    editorPage.innerHTML = `
+        <div class="editor-loading-overlay" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; gap: 16px; color: var(--muted);">
+            <span class="material-symbols-outlined spin" style="font-size: 48px; animation: spin 2s linear infinite;">sync</span>
+            <p style="font-size: 14px; font-weight: 500;">Yapay zeka değişiklikleri hesaplıyor, lütfen bekleyin…</p>
+        </div>
+    `;
+    
+    try {
+        const res = await fetch(`/documents/${encodeURIComponent(editorDoc.source)}/edit-chat`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({
+                query: message,
+                current_markdown: currentMd
+            })
+        });
+        
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Düzenleme isteği başarısız.");
+        }
+        
+        const data = await res.json();
+        showWholeDocumentDiff(data.before, data.after);
+        
+    } catch (err) {
+        alert(err.message);
+        editorPage.innerHTML = originalContent;
+    } finally {
+        editorUserInput.disabled = false;
+        editorSendButton.disabled = false;
+        editorUserInput.focus();
+    }
+}
+
+
+editorChatForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    sendEditorMessage();
+});
+
+async function selectEditorDoc(source) {
+    editorDoc = null;
+    editorPage.hidden = true;
+    editorDownloadDocx.disabled = true;
+    editorFileList.querySelectorAll(".library-row").forEach((r) =>
+        r.classList.toggle("is-active", r.dataset.source === source));
+
+    try {
+        const res = await fetch(`${DOC_CONTENT_URL}/${encodeURIComponent(source)}/content?channel=workspace`);
+        if (!res.ok) throw new Error("Load failed");
+        const data = await res.json();
+        
+        editorDoc = {
+            source,
+            markdown: data.markdown || ""
+        };
+
+        // Render HTML
+        editorPage.innerHTML = renderMarkdown(editorDoc.markdown);
+        editorPage.hidden = false;
+        
+        // Enable download button
+        editorDownloadDocx.disabled = false;
+        editorDownloadDocx.onclick = () => {
+            window.open(`/workspace/docx/${encodeURIComponent(source)}`, "_blank");
+        };
+
+        // Hide save status initially
+        setEditorSaveStatus("saved");
+    } catch (err) {
+        console.error("selectEditorDoc error:", err);
+        editorPage.innerHTML = `<p style="color: var(--danger); padding: 20px;">Belge yüklenemedi.</p>`;
+        editorPage.hidden = false;
+    }
+}
 
 chatForm.addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
 

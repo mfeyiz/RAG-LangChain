@@ -143,6 +143,7 @@ async def editor_node(state: AgentState) -> dict:
             "before": current,
             "after": updated,
             "change_kind": change,
+            "heading_path": heading_path,
         })
         preview_lines = _diff_preview_lines(current, updated)
 
@@ -165,6 +166,7 @@ async def editor_node(state: AgentState) -> dict:
                 "after": updated,
                 "change_kind": change,
                 "diff": preview_lines,
+                "heading_path": heading_path,
             },
             "edit_target_file": source,
             "edit_instruction": instruction,
@@ -387,13 +389,28 @@ def apply_pending_edit(edit: dict) -> dict:
     source = edit["source"]
     after = edit["after"]
     instruction = edit.get("instruction", "")
+    before = edit.get("before", "")
 
     md_path = paths.workspace_md_path(source)
     paths.ensure_dirs()
+    
+    # Staleness guard
+    current_content = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    if current_content.strip() != before.strip():
+        raise ValueError("Belge başka bir düzenleme nedeniyle değişti. Lütfen değişikliği tekrar isteyin.")
+
     md_path.write_text(after, encoding="utf-8")
 
     reindex = reindex_workspace_source(source)
     pdf_ok = _render_pdf_safe(source)
+    
+    # Generate DOCX
+    try:
+        from RAG.services.docx_exporter import render as render_docx
+        render_docx(source)
+    except Exception as exc:
+        print(f"[Editor] DOCX regeneration failed for {source} during apply: {exc}")
+        
     commit_sha = commit_change(source, instruction[:120])
 
     action_label = {
@@ -472,3 +489,32 @@ def _trim_context(rows: list[dict], context: int) -> list[dict]:
             out.extend(run[-context:])
         i = j
     return out
+
+
+async def direct_edit_markdown(current_markdown: str, query: str) -> str:
+    """Directly edit markdown content using instructions and a direct LLM call."""
+    llm = get_llm()
+    system_prompt = """You are a precise Markdown document editor.
+You are given a Markdown document and a user's instruction to edit it.
+Modify the document according to the instruction.
+
+Hard rules:
+1. Return ONLY the final, complete, updated Markdown document.
+2. Do NOT add any introductory or concluding text, explanations, or commentary.
+3. Do NOT wrap the output in markdown code blocks or code fences (e.g. do NOT use ```markdown). Output raw markdown content directly.
+4. Keep all existing structure, headings, tables, image tags, and text that are not affected by the instruction.
+"""
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"--- DOCUMENT BEGIN ---\n{current_markdown}\n--- DOCUMENT END ---\n\nINSTRUCTION: {query}")
+    ]
+    response = await llm.ainvoke(messages)
+    content = response.content.strip()
+    if content.startswith("```markdown"):
+        content = content[11:].strip()
+    if content.startswith("```"):
+        content = content[3:].strip()
+    if content.endswith("```"):
+        content = content[:-3].strip()
+    return content
+

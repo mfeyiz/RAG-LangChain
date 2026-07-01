@@ -54,7 +54,8 @@ project-*.json
 
 # İşletim sistemi geçici dosyaları
 .DS_Store
-Thumbs.dbRAG/traces/
+Thumbs.db
+RAG/traces/
 RAG/vector_db/qdrant/
 
 # Runtime data artifacts (uploaded docs, extracted figures, derived corpus).

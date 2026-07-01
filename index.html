@@ -29,6 +29,9 @@
             <button class="top-tab" id="tabLibrary" type="button" data-tab="library">
                 <span class="material-symbols-outlined">menu_book</span> Kitaplık
             </button>
+            <button class="top-tab" id="tabEditor" type="button" data-tab="editor">
+                <span class="material-symbols-outlined">edit_document</span> Dosya düzenleme
+            </button>
         </nav>
 
         <div class="top-actions">
@@ -228,6 +231,152 @@
                     <p>Soldan bir belge seçerek orijinal ve düzenlenmiş hâlini görüntüleyin veya karşılaştırın.</p>
                 </div>
             </div>
+        </section>
+    </main>
+
+    <!-- ── Editor view (Dosya düzenleme tab) ────────────────────── -->
+    <main class="editor-view" id="editorView" hidden>
+        <aside class="library-sidebar">
+            <div class="library-sidebar-head">
+                <h2>Belgeler</h2>
+                <span class="tag" id="editorCountTag">0</span>
+            </div>
+            <div class="library-list" id="editorFileList">
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                </div>
+            </div>
+        </aside>
+
+        <section class="editor-content">
+            <div class="editor-toolbar" id="editorToolbar">
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" data-cmd="undo" title="Geri al" type="button">
+                        <span class="material-symbols-outlined">undo</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="redo" title="Yinele" type="button">
+                        <span class="material-symbols-outlined">redo</span>
+                    </button>
+                </div>
+                
+                <div class="toolbar-divider"></div>
+                
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" id="editorZoomOut" title="Uzaklaştır" type="button">
+                        <span class="material-symbols-outlined">zoom_out</span>
+                    </button>
+                    <span class="zoom-value" id="editorZoomVal">100%</span>
+                    <button class="ghost-button toolbar-btn" id="editorZoomIn" title="Yakınlaştır" type="button">
+                        <span class="material-symbols-outlined">zoom_in</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <select class="toolbar-select" id="editorHeadingSelect">
+                        <option value="p">Paragraf</option>
+                        <option value="h1">Başlık 1</option>
+                        <option value="h2">Başlık 2</option>
+                        <option value="h3">Başlık 3</option>
+                    </select>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" data-cmd="bold" title="Kalın (Ctrl+B)" type="button">
+                        <span class="material-symbols-outlined">format_bold</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="italic" title="İtalik (Ctrl+I)" type="button">
+                        <span class="material-symbols-outlined">format_italic</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="underline" title="Altı Çizili (Ctrl+U)" type="button">
+                        <span class="material-symbols-outlined">format_underlined</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="strikeThrough" title="Üstü Çizili" type="button">
+                        <span class="material-symbols-outlined">format_strikethrough</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <div class="highlight-dropdown-container" style="position: relative;">
+                        <button class="ghost-button toolbar-btn" id="editorHighlightBtn" title="Vurgu Rengi" type="button">
+                            <span class="material-symbols-outlined">border_color</span>
+                        </button>
+                        <div class="highlight-popover" id="editorHighlightPopover" hidden>
+                            <button class="color-swatch" data-color="yellow" style="background-color: #fef08a;" title="Sarı"></button>
+                            <button class="color-swatch" data-color="green" style="background-color: #bbf7d0;" title="Yeşil"></button>
+                            <button class="color-swatch" data-color="blue" style="background-color: #bfdbfe;" title="Mavi"></button>
+                            <button class="color-swatch" data-color="red" style="background-color: #fecaca;" title="Kırmızı"></button>
+                            <button class="color-swatch" data-color="clear" style="background-color: #fff; border: 1px solid var(--border);" title="Temizle">✕</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" data-cmd="insertUnorderedList" title="Madde İşaretli Liste" type="button">
+                        <span class="material-symbols-outlined">format_list_bulleted</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="insertOrderedList" title="Numaralı Liste" type="button">
+                        <span class="material-symbols-outlined">format_list_numbered</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" data-cmd="justifyLeft" title="Sola Hizala" type="button">
+                        <span class="material-symbols-outlined">format_align_left</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="justifyCenter" title="Ortala" type="button">
+                        <span class="material-symbols-outlined">format_align_center</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" data-cmd="justifyRight" title="Sağa Hizala" type="button">
+                        <span class="material-symbols-outlined">format_align_right</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" id="editorAddChartBtn" title="Grafik Ekle" type="button">
+                        <span class="material-symbols-outlined">insert_chart</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-group sa-right" style="margin-left: auto;">
+                    <button class="primary-button toolbar-btn-download" id="editorDownloadDocx" title="Word Dosyası Olarak İndir" type="button" disabled>
+                        <span class="material-symbols-outlined">download</span> İndir (.docx)
+                    </button>
+                </div>
+            </div>
+            <div class="editor-body">
+                <div class="editor-page-wrapper">
+                    <div class="editor-page" id="editorPage" contenteditable="true" placeholder="İçerik yükleniyor veya boş..." hidden></div>
+                </div>
+            </div>
+            
+            <div class="editor-save-container">
+                <span class="editor-save-pill" id="editorSaveStatus" hidden>
+                    <span class="status-dot"></span>
+                    <span class="status-text">Kaydedildi</span>
+                </span>
+            </div>
+
+            <form class="composer editor-chat-composer" id="editorChatForm">
+                <div class="composer-input-wrap">
+                    <textarea id="editorUserInput" placeholder="AI'ya başka ne değiştirmesi gerektiğini söyleyin… (örn: @update ile başlayın)" rows="1"></textarea>
+                </div>
+                <button id="editorSendButton" type="submit" aria-label="Gönder">
+                    <span class="material-symbols-outlined">arrow_upward</span>
+                </button>
+            </form>
         </section>
     </main>
 

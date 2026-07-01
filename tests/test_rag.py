@@ -401,3 +401,52 @@ def test_supervisor_fast_track_disabled_offline(monkeypatch):
     result = asyncio.run(supervisor_node(state))
     # With fast-track disabled the social shortcut still routes greetings to writer.
     assert result["next_agent"] in ("writer", "researcher")
+
+
+def test_docx_exporter_creates_document(tmp_path, monkeypatch):
+    from RAG.services import paths
+    from RAG.services.docx_exporter import render as render_docx
+
+    # Mock WORKSPACE_MD_DIR and WORKSPACE_DOCX_DIR to tmp_path
+    monkeypatch.setattr(paths, "WORKSPACE_MD_DIR", tmp_path / "workspace" / "markdown")
+    monkeypatch.setattr(paths, "WORKSPACE_DOCX_DIR", tmp_path / "workspace" / "docx")
+
+    source = "test_doc.md"
+    md_path = paths.workspace_md_path(source)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Write a test markdown with multiple heading levels, lists, strong/em, and tables
+    md_content = """# Heading 1
+## Heading 2
+Some text with **bold**, *italic*, <u>underline</u>, <mark>highlight</mark>, and ~~strike~~.
+
+- List item 1
+- List item 2
+
+1. Numbered 1
+2. Numbered 2
+
+> A quote block
+
+| Year | Revenue |
+| --- | --- |
+| 2021 | 100 |
+
+```python
+print("Hello docx")
+```
+"""
+    md_path.write_text(md_content, encoding="utf-8")
+
+    out_path = render_docx(source)
+    assert out_path.exists()
+    assert out_path.name == "test_doc.docx"
+
+    # Verify we can load it back using python-docx
+    from docx import Document
+    doc = Document(str(out_path))
+    assert len(doc.paragraphs) > 0
+    # Headings check
+    headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+    assert "Heading 1" in headings
+    assert "Heading 2" in headings

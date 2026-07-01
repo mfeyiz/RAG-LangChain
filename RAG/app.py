@@ -564,6 +564,24 @@ async def download_workspace_pdf(source: str):
     return FileResponse(str(pdf_path), media_type="application/pdf", filename=pdf_path.name)
 
 
+@app.get("/workspace/docx/{source:path}")
+async def download_workspace_docx(source: str):
+    """Serve a regenerated workspace DOCX for a given source ("<stem>.md")."""
+    docx_path = paths.workspace_docx_path(source)
+    # Path-traversal guard: the resolved path must stay inside WORKSPACE_DOCX_DIR.
+    try:
+        docx_path.resolve().relative_to(paths.WORKSPACE_DOCX_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+    if not docx_path.exists():
+        return JSONResponse({"error": "Word dosyası bulunamadı. Lütfen önce belgeyi kaydedin."}, status_code=404)
+    return FileResponse(
+        str(docx_path),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=docx_path.name
+    )
+
+
 @app.get("/originals/file/{source:path}")
 async def download_original(source: str):
     """Serve the original uploaded PDF/DOCX for a source ("<stem>.md")."""
@@ -620,6 +638,90 @@ async def document_content(source: str, channel: str = Query(default="workspace"
         "markdown": md_path.read_text(encoding="utf-8"),
         "original_url": f"/originals/file/{source}" if paths.original_doc_path(source) else "",
         "workspace_pdf_url": f"/workspace/pdf/{source}" if paths.workspace_pdf_path(source).exists() else "",
+        "workspace_docx_url": f"/workspace/docx/{source}" if paths.workspace_docx_path(source).exists() else "",
+    }
+
+
+class SaveDocumentRequest(BaseModel):
+    markdown: str
+
+
+@app.post("/documents/{source:path}/save")
+async def save_document(source: str, body: SaveDocumentRequest, request: Request):
+    """Save manual markdown edits, perform re-indexing, regenerate PDF/DOCX, and commit."""
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "Değişiklikleri kaydetmek için giriş yapmalısınız."}, status_code=401)
+
+    md_path = paths.workspace_md_path(source)
+    try:
+        md_path.resolve().relative_to(paths.WORKSPACE_MD_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+
+    paths.ensure_dirs()
+
+    def _save_and_reindex():
+        md_path.write_text(body.markdown, encoding="utf-8")
+
+        # Re-index workspace source chunks
+        from RAG.services.document_manager import reindex_workspace_source
+        reindex = reindex_workspace_source(source)
+
+        # PDF Regeneration
+        from RAG.agents.editor import _render_pdf_safe
+        pdf_ok = _render_pdf_safe(source)
+
+        # DOCX Regeneration
+        from RAG.services.docx_exporter import render as render_docx
+        try:
+            render_docx(source)
+            docx_ok = True
+        except Exception as exc:
+            print(f"[app] DOCX regeneration failed for {source} during save: {exc}")
+            docx_ok = False
+
+        # Git Commit
+        from RAG.services.version_control import commit_change
+        commit_sha = commit_change(source, "manuel düzenleme")
+
+        return reindex.get("chunks_added", 0), pdf_ok, docx_ok, commit_sha
+
+    chunks_added, pdf_ok, docx_ok, commit_sha = await asyncio.to_thread(_save_and_reindex)
+
+    return {
+        "ok": True,
+        "source": source,
+        "pdf_ok": pdf_ok,
+        "docx_ok": docx_ok,
+        "git_sha": commit_sha,
+        "chunks_added": chunks_added,
+    }
+
+
+class EditChatRequest(BaseModel):
+    query: str
+    current_markdown: str
+
+
+@app.post("/documents/{source:path}/edit-chat")
+async def edit_document_chat(source: str, body: EditChatRequest, request: Request):
+    """Directly edit a document using instructions without supervisor routing."""
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "Kimlik doğrulaması gerekli."}, status_code=401)
+
+    from RAG.agents.editor import direct_edit_markdown
+    try:
+        updated_md = await direct_edit_markdown(body.current_markdown, body.query)
+    except Exception as exc:
+        return JSONResponse({"error": f"Yapay zeka ile düzenleme başarısız: {exc}"}, status_code=500)
+
+    return {
+        "ok": True,
+        "source": source,
+        "before": body.current_markdown,
+        "after": updated_md
     }
 
 
@@ -789,9 +891,9 @@ async def admin_stats(request: Request):
 
 @app.get("/admin/documents")
 async def admin_list_documents(request: Request, channel: str = Query(default="workspace")):
-    _, err = _require_admin(request)
-    if err:
-        return err
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "Kimlik doğrulaması gerekli."}, status_code=401)
     if channel not in ("originals", "workspace"):
         return JSONResponse({"error": "channel must be 'originals' or 'workspace'."}, status_code=400)
     return {"channel": channel, "documents": list_documents(channel)}

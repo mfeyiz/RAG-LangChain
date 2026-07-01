@@ -4,6 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+import httpx
 
 from RAG.agents.state import AgentState
 from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
@@ -38,6 +39,8 @@ def get_llm():
         temperature=0,
         streaming=True,
         extra_body=_provider_extra_body(),
+        http_client=httpx.Client(verify=False),
+        http_async_client=httpx.AsyncClient(verify=False),
     )
 
 
@@ -70,6 +73,8 @@ def get_fast_llm():
         temperature=0,
         streaming=False,
         extra_body={"provider": {"sort": "latency"}} if "openrouter.ai" in _FAST_LLM_BASE_URL else {},
+        http_client=httpx.Client(verify=False),
+        http_async_client=httpx.AsyncClient(verify=False),
     )
 
 
@@ -87,6 +92,8 @@ def get_vision_llm(streaming: bool = True):
         temperature=0,
         streaming=streaming,
         extra_body=extra_body,
+        http_client=httpx.Client(verify=False),
+        http_async_client=httpx.AsyncClient(verify=False),
     )
 
 

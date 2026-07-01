@@ -22,6 +22,7 @@ ORIGINALS_IMG_DIR = DATA_DIR / "originals" / "images"
 WORKSPACE_MD_DIR = DATA_DIR / "workspace" / "markdown"
 WORKSPACE_PDF_DIR = DATA_DIR / "workspace" / "pdf"
 WORKSPACE_IMG_DIR = DATA_DIR / "workspace" / "images"
+WORKSPACE_DOCX_DIR = DATA_DIR / "workspace" / "docx"
 
 # Extracted document figures live under a per-document subdir keyed by stem, so a
 # source maps deterministically to its image folder in either channel.
@@ -38,6 +39,7 @@ _ALL_DIRS = (
     WORKSPACE_MD_DIR,
     WORKSPACE_PDF_DIR,
     WORKSPACE_IMG_DIR,
+    WORKSPACE_DOCX_DIR,
 )
 
 
@@ -70,6 +72,10 @@ def originals_md_path(source: str) -> Path:
 
 def workspace_pdf_path(source: str) -> Path:
     return WORKSPACE_PDF_DIR / f"{stem_of(source)}.pdf"
+
+
+def workspace_docx_path(source: str) -> Path:
+    return WORKSPACE_DOCX_DIR / f"{stem_of(source)}.docx"
 
 
 def originals_images_dir(source: str) -> Path:

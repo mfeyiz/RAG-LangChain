@@ -1703,3 +1703,363 @@ body.cite-open .workspace {
     .library-view { grid-template-columns: 1fr; height: auto; }
     .compare-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Editor view (Dosya düzenleme tab) ─────────────────────────────── */
+.editor-view {
+    width: min(1280px, 100%);
+    margin: 0 auto;
+    padding: 24px 28px 28px;
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 22px;
+    align-items: start;
+    height: calc(100vh - 76px);
+}
+
+.editor-content {
+    background: #fff;
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.editor-body {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--sunken);
+    padding: 32px 16px;
+    display: flex;
+    justify-content: center;
+}
+
+.editor-page-wrapper {
+    width: 100%;
+    max-width: 720px;
+    position: relative;
+}
+
+.editor-page {
+    background: var(--surface);
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 56px 64px;
+    min-height: 842px; /* A4-ish height */
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--ink);
+    outline: none;
+    transform: scale(var(--editor-zoom, 1));
+    transform-origin: top center;
+    transition: transform 0.2s ease;
+    word-wrap: break-word;
+}
+
+.editor-page[placeholder]:empty:before {
+    content: attr(placeholder);
+    color: var(--faint);
+}
+
+/* Save container and pill */
+.editor-save-container {
+    position: absolute;
+    top: 68px; /* just below toolbar */
+    right: 24px;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.editor-save-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: var(--shadow-sm);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    transition: opacity 0.2s;
+}
+
+.editor-save-pill.saving .status-dot {
+    background: var(--accent);
+    animation: pulse 1s infinite;
+}
+
+.editor-save-pill.saved .status-dot {
+    background: var(--success);
+}
+
+.editor-save-pill.dirty .status-dot {
+    background: var(--warning, #f59e0b);
+}
+
+.editor-save-pill.error .status-dot {
+    background: var(--danger);
+}
+
+.editor-save-pill.error {
+    color: var(--danger);
+    border-color: var(--danger-soft);
+    background: var(--danger-soft);
+}
+
+/* Composer styling for editor */
+.editor-chat-composer {
+    margin: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-sm);
+    flex-shrink: 0;
+}
+
+/* Toolbar styling */
+.editor-toolbar {
+    background: var(--sunken);
+    border-bottom: 1px solid var(--accent-line);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.toolbar-divider {
+    width: 1px;
+    height: 20px;
+    background-color: var(--border);
+    margin: 0 4px;
+}
+
+.toolbar-btn {
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+}
+
+.toolbar-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent-hover);
+}
+
+.toolbar-btn.is-active {
+    background: var(--accent-soft);
+    color: var(--accent-hover);
+    border-color: var(--accent-line);
+}
+
+.toolbar-btn .material-symbols-outlined {
+    font-size: 18px;
+}
+
+.toolbar-select {
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+    cursor: pointer;
+}
+
+.toolbar-select:focus {
+    border-color: var(--accent);
+}
+
+.zoom-value {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    min-width: 44px;
+    text-align: center;
+}
+
+/* Highlight color picker popover */
+.highlight-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+    padding: 8px;
+    display: flex;
+    gap: 6px;
+    z-index: 20;
+}
+
+.color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.1);
+    cursor: pointer;
+    transition: transform 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.color-swatch:hover {
+    transform: scale(1.15);
+}
+
+.toolbar-btn-download {
+    margin-top: 0 !important;
+    padding: 0 14px;
+    height: 32px;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: var(--radius-sm);
+}
+
+.toolbar-btn-download[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--border-strong);
+    color: var(--faint);
+}/* Inline diff block styling in editor page */
+.inline-diff-section {
+    border: 2px dashed var(--accent-line);
+    border-radius: var(--radius-sm);
+    background: var(--sunken);
+    padding: 16px;
+    margin: 16px 0;
+    position: relative;
+}
+
+.inline-diff-line {
+    font-family: var(--mono, monospace);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.inline-diff-added {
+    background-color: var(--success-soft);
+    color: var(--success);
+    border-left: 3px solid var(--success);
+}
+
+.inline-diff-removed {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+    text-decoration: line-through;
+    border-left: 3px solid var(--danger);
+}
+
+.inline-diff-same {
+    color: var(--muted);
+}
+
+.inline-diff-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.inline-diff-actions button {
+    height: 30px;
+    padding: 0 12px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: var(--radius-sm);
+}
+
+.inline-diff-actions .material-symbols-outlined {
+    font-size: 14px;
+}
+
+/* Whole document diff styling */
+.whole-document-diff {
+    font-family: var(--mono, monospace);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 16px;
+    background: var(--sunken);
+    border-radius: var(--radius-md);
+}
+
+.editor-diff-actions-bar {
+    position: sticky;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+    max-width: 600px;
+    background: var(--bg-main, #ffffff);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-md);
+    padding: 12px 20px;
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    z-index: 100;
+    margin: 16px auto 0 auto;
+}
+
+.diff-bar-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.diff-bar-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.diff-bar-buttons button {
+    height: 32px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: var(--radius-sm);
+    padding: 0 14px;
+}
+
+/* Spin animation keyframes */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
