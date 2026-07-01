@@ -159,8 +159,7 @@ async def supervisor_node(state: AgentState) -> dict:
         # Route to researcher unless it is a short social phrase that needs no
         # document lookup.
         _SOCIAL = frozenset([
-            "merhaba", "selam", "hello", "hi", "hey", "teşekkür", "teşekkürler",
-            "thanks", "thank", "günaydın", "iyi", "nasılsın", "görüşürüz", "bye",
+            "hello", "hi", "hey", "thanks", "thank", "bye", "goodbye",
         ])
         words = state["query"].lower().split()
         if len(words) <= 6 and _SOCIAL.intersection(words):
@@ -191,7 +190,7 @@ _FAST_CLASSIFY_PROMPT = """You are a router for a multi-agent document QA system
 
 Return ONLY a single word, no punctuation, no explanation:
 - "simple" : greetings, chitchat, thanks, or a single-step factual question answerable from general knowledge WITHOUT the document store (e.g. "who wrote Hamlet?").
-- "calc" : the message asks for an arithmetic calculation, an average/sum/percentage, a comparison of numbers, OR asks to generate a chart/graph from data (e.g. "son 3 yılın kâr marjı ortalamasını bul", "bu verileri pasta grafiğine dök").
+- "calc" : the message asks for an arithmetic calculation, an average/sum/percentage, a comparison of numbers, OR asks to generate a chart/graph from data.
 - "research" : anything that needs the knowledge base / documents to answer (most questions about the uploaded corpus), multi-step questions, comparisons, or requests that mention @update.
 
 User message:
@@ -245,10 +244,9 @@ async def _classify_intent(state: AgentState) -> tuple[bool, str]:
 
 
 _CALC_HINTS = (
-    "ortalama", "ortalaması", "toplam", "fark", "oran", "yüzde", "kâr marjı",
-    "regresyon", "korelasyon", "grafiğ", "pasta grafik", "bar chart", "scatter",
-    "histogram", "çiz", "plot", "hesapla", "calculate", "average", "sum", "ratio",
-    "percentage", "compound", "cagr", "wacc", "ebitda",
+    "bar chart", "scatter", "histogram", "plot", "calculate", "average", "sum",
+    "ratio", "percentage", "compound", "cagr", "wacc", "ebitda", "regression",
+    "correlation", "pie chart",
 )
 
 

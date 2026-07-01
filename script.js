@@ -68,11 +68,11 @@ const AGENT_ORDER    = ["supervisor", "researcher", "writer", "reviewer", "edito
 const AGENT_PROGRESS = { supervisor: 18, researcher: 45, writer: 74, reviewer: 92, editor: 74 };
 const AGENT_LABELS   = { supervisor: "Supervisor", researcher: "Researcher", writer: "Writer", reviewer: "Reviewer", editor: "Editor" };
 const AGENT_MESSAGES = {
-    supervisor: "Yönlendirme kararı veriliyor",
-    researcher: "Vektör veritabanı taranıyor",
-    writer:     "Kanıtlara dayalı yanıt yazılıyor",
-    reviewer:   "Cevap kalite kontrolden geçiyor",
-    editor:     "Bilgi güncelleniyor ve yeniden indeksleniyor",
+    supervisor: "Making routing decision",
+    researcher: "Searching vector database",
+    writer:     "Writing evidence-based answer",
+    reviewer:   "Quality-checking the answer",
+    editor:     "Updating knowledge and re-indexing",
 };
 
 /* ── Auth state ──────────────────────────────────────────────── */
@@ -127,7 +127,7 @@ function renderAttachPreview() {
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "attach-remove";
-        remove.setAttribute("aria-label", "Kaldır");
+        remove.setAttribute("aria-label", "Remove");
         remove.innerHTML = `<span class="material-symbols-outlined">close</span>`;
         remove.addEventListener("click", () => { pendingImages.splice(i, 1); renderAttachPreview(); });
         thumb.appendChild(remove);
@@ -177,8 +177,8 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
     setControlsDisabled(true);
 
     setStatus("Running", "running");
-    updateProgress(8, "İstek alındı", "Input staging");
-    logEvent("request", "Kullanıcı isteği alındı. Graph çalıştırılıyor.");
+    updateProgress(8, "Request received", "Input staging");
+    logEvent("request", "User request received. Running graph.");
     startElapsedTimer();
 
     const typingIndicator = addTypingIndicator();
@@ -203,7 +203,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
         if (response.status === 403) {
             // @update attempted without auth — prompt the user to sign in.
             typingIndicator.remove();
-            let detail = "@update için giriş yapmalısınız.";
+            let detail = "You must be signed in to use @update.";
             try { const p = await response.json(); if (p?.error) detail = p.error; } catch {}
             throw new Error(detail, { cause: "auth" });
         }
@@ -211,7 +211,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
         if (!response.ok || !response.body) {
             let detail = "";
             try { const p = await response.json(); detail = p?.error ? ` ${p.error}` : ""; } catch {}
-            throw new Error(`API isteği başarısız oldu.${detail}`);
+            throw new Error(`API request failed.${detail}`);
         }
 
         typingIndicator.remove();
@@ -239,9 +239,9 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
                 const webResults = results.filter((r) => r.origin === "web");
                 if (webResults.length) {
                     webSources = webResults;
-                    logEvent("retrieval", `İnternetten ${webResults.length} kaynak getirildi.`);
+                    logEvent("retrieval", `Fetched ${webResults.length} sources from the web.`);
                 } else {
-                    logEvent("retrieval", `${results.length} doküman skoru alındı.`);
+                    logEvent("retrieval", `${results.length} document scores retrieved.`);
                 }
             }
 
@@ -249,7 +249,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
             if (event.event === "context_images") {
                 const images = safeJson(event.data) || [];
                 showContextImages(botMessageDiv, images);
-                if (images.length) logEvent("retrieval", `${images.length} ilgili görsel bulundu.`);
+                if (images.length) logEvent("retrieval", `${images.length} related images found.`);
             }
 
             /* weak RAG match — ask before searching the web */
@@ -280,7 +280,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
                     if (!editorView.hidden && editorDoc && (payload.file === editorDoc.source || payload.source === editorDoc.source)) {
                         const inlineOk = showInlineEditPreview(payload);
                         if (inlineOk) {
-                            logEvent("editor", `Değişiklik önizlemesi editör sayfasında hazır (${payload.file || ""}).`);
+                            logEvent("editor", `Change preview ready in editor (${payload.file || ""}).`);
                             continue;
                         }
                     }
@@ -293,7 +293,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
             if (event.event === "token") {
                 streamingStarted = true;
                 fullText += event.data;
-                contentDiv.textContent = fullText;
+                contentDiv.innerHTML = renderMarkdown(fullText);
                 contentDiv.classList.add("is-streaming");
                 scrollToBottom();
             }
@@ -324,12 +324,12 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
 
             if (event.event === "error") {
                 const payload = safeJson(event.data);
-                throw new Error(payload?.error || "Bilinmeyen stream hatası.");
+                throw new Error(payload?.error || "Unknown stream error.");
             }
         }
 
         if (!fullText.trim() && !awaitingApproval && !awaitingEditApproval) {
-            contentDiv.textContent = "Akış tamamlandı fakat yanıt metni üretilmedi.";
+            contentDiv.textContent = "Stream completed but no response text was generated.";
         }
         if (!completed) markComplete();
 
@@ -337,7 +337,7 @@ async function runQuery(message, { allowWeb = false, echoUser = true } = {}) {
         typingIndicator.remove();
         contentDiv.classList.remove("is-streaming");
         if (!fullText.trim()) {
-            contentDiv.textContent = `Üzgünüm, bir hata oluştu. ${error.message || "Lütfen tekrar deneyin."}`;
+            contentDiv.textContent = `Sorry, an error occurred. ${error.message || "Please try again."}`;
         }
         markError(error.message);
         console.error(error);
@@ -358,7 +358,7 @@ function showEditResult(botMessageDiv, payload) {
 
     if (payload.file) {
         card.classList.add("is-clickable");
-        card.title = "Güncellenen belgeyi görüntüle";
+        card.title = "View updated document";
         card.addEventListener("click", (e) => {
             if (e.target.closest("a")) return;  // let the download link work normally
             openUpdatedDoc(payload.file);
@@ -367,7 +367,7 @@ function showEditResult(botMessageDiv, payload) {
 
     const title = document.createElement("div");
     title.className = "edit-result-title";
-    title.innerHTML = `<span class="material-symbols-outlined">drive_file_rename_outline</span> ${payload.file || "Çalışma alanı güncellendi"}`;
+    title.innerHTML = `<span class="material-symbols-outlined">drive_file_rename_outline</span> ${payload.file || "Workspace updated"}`;
     card.appendChild(title);
 
     if (payload.summary) {
@@ -383,19 +383,19 @@ function showEditResult(botMessageDiv, payload) {
         link.href = payload.pdf_url;
         link.target = "_blank";
         link.rel = "noopener";
-        link.innerHTML = `<span class="material-symbols-outlined">download</span> Güncel PDF'i indir`;
+        link.innerHTML = `<span class="material-symbols-outlined">download</span> Download updated PDF`;
         card.appendChild(link);
     }
 
     if (payload.file) {
         const hint = document.createElement("div");
         hint.className = "edit-result-hint";
-        hint.innerHTML = `<span class="material-symbols-outlined">open_in_new</span> Değişikliği görmek için tıklayın`;
+        hint.innerHTML = `<span class="material-symbols-outlined">open_in_new</span> Click to see the change`;
         card.appendChild(hint);
     }
 
     botMessageDiv.appendChild(card);
-    logEvent("editor", `Çalışma alanı güncellendi: ${payload.file || ""}`);
+    logEvent("editor", `Workspace updated: ${payload.file || ""}`);
     scrollToBottom();
 }
 
@@ -423,14 +423,14 @@ function showEditPreview(botMessageDiv, payload) {
     header.className = "edit-preview-head";
     header.innerHTML = `
         <span class="material-symbols-outlined">rule</span>
-        <span class="edit-preview-title">Değişiklik önizleme</span>
+        <span class="edit-preview-title">Change preview</span>
         <span class="edit-preview-file">${escapeHtml(payload.file || "")}</span>`;
     card.appendChild(header);
 
     if (payload.instruction) {
         const instr = document.createElement("p");
         instr.className = "edit-preview-instruction";
-        instr.innerHTML = `<strong>Talimat:</strong> ${escapeHtml(payload.instruction)}`;
+        instr.innerHTML = `<strong>Instruction:</strong> ${escapeHtml(payload.instruction)}`;
         card.appendChild(instr);
     }
 
@@ -438,7 +438,7 @@ function showEditPreview(botMessageDiv, payload) {
     if (!diff.length) {
         const note = document.createElement("p");
         note.className = "edit-preview-empty";
-        note.textContent = "Değişiklik tespit edilmedi.";
+        note.textContent = "No change detected.";
         card.appendChild(note);
         botMessageDiv.appendChild(card);
         return;
@@ -465,7 +465,7 @@ function showEditPreview(botMessageDiv, payload) {
     meta.className = "edit-preview-meta";
     const added = diff.filter((r) => r.type === "added").length;
     const removed = diff.filter((r) => r.type === "removed").length;
-    meta.textContent = `+${added} satır · −${removed} satır`;
+    meta.textContent = `+${added} lines · −${removed} lines`;
     card.appendChild(meta);
 
     const actions = document.createElement("div");
@@ -474,13 +474,13 @@ function showEditPreview(botMessageDiv, payload) {
     const approveBtn = document.createElement("button");
     approveBtn.type = "button";
     approveBtn.className = "primary-button edit-approve";
-    approveBtn.innerHTML = `<span class="material-symbols-outlined">check</span> Onayla`;
+    approveBtn.innerHTML = `<span class="material-symbols-outlined">check</span> Approve`;
     approveBtn.disabled = false;
 
     const rejectBtn = document.createElement("button");
     rejectBtn.type = "button";
     rejectBtn.className = "ghost-button edit-reject";
-    rejectBtn.innerHTML = `<span class="material-symbols-outlined">close</span> Reddet`;
+    rejectBtn.innerHTML = `<span class="material-symbols-outlined">close</span> Reject`;
 
     actions.appendChild(rejectBtn);
     actions.appendChild(approveBtn);
@@ -491,12 +491,12 @@ function showEditPreview(botMessageDiv, payload) {
     card.appendChild(status);
 
     botMessageDiv.appendChild(card);
-    logEvent("editor", `Değişiklik önizlemesi hazır — onay bekleniyor (${payload.file || ""}).`);
+    logEvent("editor", `Change preview ready — awaiting approval (${payload.file || ""}).`);
     scrollToBottom();
 
     async function approve() {
         approveBtn.disabled = true; rejectBtn.disabled = true;
-        status.textContent = "Uygulanıyor…"; status.className = "edit-preview-status is-pending";
+        status.textContent = "Applying…"; status.className = "edit-preview-status is-pending";
         try {
             const res = await fetch("/update/apply", {
                 method: "POST",
@@ -504,15 +504,15 @@ function showEditPreview(botMessageDiv, payload) {
                 body: JSON.stringify({ token: payload.token }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Onay başarısız.");
-            status.innerHTML = `<span class="material-symbols-outlined">check_circle</span> ${escapeHtml(data.reply || "Değişiklik uygulandı.")}`;
+            if (!res.ok) throw new Error(data.error || "Approval failed.");
+            status.innerHTML = `<span class="material-symbols-outlined">check_circle</span> ${escapeHtml(data.reply || "Change applied.")}`;
             status.className = "edit-preview-status is-ok";
             card.querySelector(".diff-viewer").classList.add("diff-applied");
             card.querySelector(".edit-preview-actions").remove();
             addMessage(data.reply, "assistant");
             loadLibrary();
         } catch (err) {
-            status.textContent = `Hata: ${err.message}`;
+            status.textContent = `Error: ${err.message}`;
             status.className = "edit-preview-status is-error";
             approveBtn.disabled = false; rejectBtn.disabled = false;
         }
@@ -527,10 +527,10 @@ function showEditPreview(botMessageDiv, payload) {
                 body: JSON.stringify({ token: payload.token }),
             });
         } catch { /* fire-and-forget */ }
-        status.innerHTML = `<span class="material-symbols-outlined">cancel</span> Değişiklik reddedildi — belgeye işlenmedi.`;
+        status.innerHTML = `<span class="material-symbols-outlined">cancel</span> Change rejected — not applied to document.`;
         status.className = "edit-preview-status is-rejected";
         card.querySelector(".edit-preview-actions").remove();
-        logEvent("editor", "Değişiklik kullanıcı tarafından reddedildi.");
+        logEvent("editor", "Change rejected by user.");
     }
 
     approveBtn.addEventListener("click", approve);
@@ -549,10 +549,10 @@ function addFeedbackRow(botMessageDiv, query) {
 
     const label   = document.createElement("span");
     label.className = "feedback-label";
-    label.textContent = "Bu yanıt yardımcı oldu mu?";
+    label.textContent = "Was this response helpful?";
 
-    const upBtn   = makeFeedbackBtn("thumb_up",   "İyi yanıt",  1);
-    const downBtn = makeFeedbackBtn("thumb_down", "Kötü yanıt", -1);
+    const upBtn   = makeFeedbackBtn("thumb_up",   "Good response",  1);
+    const downBtn = makeFeedbackBtn("thumb_down", "Poor response", -1);
 
     let submitted = false;
 
@@ -582,7 +582,7 @@ function addFeedbackRow(botMessageDiv, query) {
         if (submitted) return;
         submitted = true;
         lockButtons(1);
-        label.textContent = "Teşekkürler! 👍";
+        label.textContent = "Thanks! 👍";
         sendFeedback(1, "");
     });
 
@@ -590,7 +590,7 @@ function addFeedbackRow(botMessageDiv, query) {
         if (submitted) return;
         submitted = true;
         lockButtons(-1);
-        label.textContent = "Geri bildiriminiz için teşekkürler.";
+        label.textContent = "Thanks for your feedback.";
         // Capture the rating immediately, then let the user enrich it with a comment.
         sendFeedback(-1, "");
         showCommentBox(wrap, query, sendComment);
@@ -623,20 +623,20 @@ function showCommentBox(wrap, query, onSubmit) {
     box.className = "feedback-comment";
 
     const textarea = document.createElement("textarea");
-    textarea.placeholder = "Neyi iyileştirebiliriz? (isteğe bağlı)";
+    textarea.placeholder = "What could we improve? (optional)";
     textarea.rows = 2;
 
     const submit = document.createElement("button");
     submit.type = "button";
     submit.className = "feedback-comment-submit";
-    submit.textContent = "Gönder";
+    submit.textContent = "Send";
 
     let sent = false;
     function finish() {
         if (sent) return;
         sent = true;
         onSubmit(textarea.value.trim());
-        box.innerHTML = `<span class="feedback-comment-done">Yorumunuz kaydedildi.</span>`;
+        box.innerHTML = `<span class="feedback-comment-done">Your comment was saved.</span>`;
     }
 
     submit.addEventListener("click", finish);
@@ -773,10 +773,10 @@ const authError       = document.getElementById("authError");
 
 function renderAuthState() {
     if (!authButtonLabel) return;
-    authButtonLabel.textContent = isAuthenticated() ? (authUser || "Çıkış yap") : "Giriş yap";
+    authButtonLabel.textContent = isAuthenticated() ? (authUser || "Sign out") : "Sign in";
     if (authButton) authButton.title = isAuthenticated()
-        ? `${authUser} olarak giriş yapıldı — çıkış için tıklayın`
-        : "Giriş yap";
+        ? `Signed in as ${authUser} — click to sign out`
+        : "Sign in";
 }
 
 function openAuthModal() {
@@ -794,7 +794,7 @@ if (authButton) {
         if (isAuthenticated()) {
             // Toggle to logout when already signed in.
             setAuth("", "");
-            logEvent("auth", "Oturum kapatıldı.");
+            logEvent("auth", "Signed out.");
         } else {
             openAuthModal();
         }
@@ -819,15 +819,15 @@ if (authForm) {
             });
             const data = await res.json();
             if (!res.ok) {
-                authError.textContent = data.error || "Giriş başarısız oldu.";
+                authError.textContent = data.error || "Sign-in failed.";
                 authError.hidden = false;
                 return;
             }
             setAuth(data.token, data.username || username);
             closeAuthModal();
-            logEvent("auth", `${data.username || username} olarak giriş yapıldı.`);
+            logEvent("auth", `Signed in as ${data.username || username}.`);
         } catch (err) {
-            authError.textContent = "Sunucuya ulaşılamadı.";
+            authError.textContent = "Could not reach the server.";
             authError.hidden = false;
         }
     });
@@ -863,11 +863,11 @@ async function uploadFile(file) {
     const allowed = [".pdf", ".docx"];
     const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
     if (!allowed.includes(ext)) {
-        showUploadStatus("Sadece .pdf ve .docx dosyaları desteklenir.", "error");
+        showUploadStatus("Only .pdf and .docx files are supported.", "error");
         return;
     }
 
-    showUploadStatus("Yükleniyor ve indeksleniyor…", "loading");
+    showUploadStatus("Uploading and indexing…", "loading");
 
     const formData = new FormData();
     formData.append("file", file);
@@ -877,20 +877,20 @@ async function uploadFile(file) {
         const data = await res.json();
 
         if (!res.ok) {
-            showUploadStatus(`Hata: ${data.error || res.statusText}`, "error");
+            showUploadStatus(`Error: ${data.error || res.statusText}`, "error");
             return;
         }
 
         showUploadStatus(
-            `✓ "${escapeHtml(data.filename)}" başarıyla yüklendi — ${data.chunks_added} chunk indekslendi.`,
+            `✓ "${escapeHtml(data.filename)}" uploaded successfully — ${data.chunks_added} chunks indexed.`,
             "success",
         );
-        logEvent("upload", `${data.filename} → ${data.chunks_added} chunk eklendi.`);
+        logEvent("upload", `${data.filename} → ${data.chunks_added} chunks added.`);
         loadDocumentList();
         loadLibrary();
         loadEditorFileList();
     } catch (err) {
-        showUploadStatus(`Yükleme başarısız: ${err.message}`, "error");
+        showUploadStatus(`Upload failed: ${err.message}`, "error");
     }
 }
 
@@ -909,7 +909,7 @@ function clearUploadStatus() {
    DOCUMENT LIST (admin: list + delete)
 ═══════════════════════════════════════════════════════════════ */
 async function loadDocumentList() {
-    docCountTag.textContent = "Yükleniyor…";
+    docCountTag.textContent = "Loading…";
     docList.innerHTML = "";
 
     try {
@@ -917,13 +917,13 @@ async function loadDocumentList() {
         const data = await res.json();
         const docs = data.documents || [];
 
-        docCountTag.textContent = `${docs.length} kaynak`;
+        docCountTag.textContent = `${docs.length} sources`;
 
         if (!docs.length) {
             docList.innerHTML = `
                 <div class="doc-list-empty">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>Henüz belge yok.</p>
+                    <p>No documents yet.</p>
                 </div>`;
             return;
         }
@@ -942,7 +942,7 @@ async function loadDocumentList() {
             const delBtn = document.createElement("button");
             delBtn.type = "button";
             delBtn.className = "doc-delete-btn";
-            delBtn.title = "Sil";
+            delBtn.title = "Delete";
             delBtn.innerHTML = `<span class="material-symbols-outlined">delete</span>`;
             delBtn.addEventListener("click", () => deleteDocument(doc.source, row));
 
@@ -951,37 +951,37 @@ async function loadDocumentList() {
             docList.appendChild(row);
         });
     } catch {
-        docCountTag.textContent = "Hata";
-        docList.innerHTML = `<div class="doc-list-empty"><p>Belgeler yüklenemedi.</p></div>`;
+        docCountTag.textContent = "Error";
+        docList.innerHTML = `<div class="doc-list-empty"><p>Could not load documents.</p></div>`;
     }
 }
 
 async function deleteDocument(source, rowEl) {
-    if (!confirm(`"${source.split("/").pop()}" belgesini silmek istediğinizden emin misiniz?`)) return;
+    if (!confirm(`Are you sure you want to delete "${source.split("/").pop()}"?`)) return;
 
     rowEl.classList.add("is-deleting");
     try {
         const res  = await fetch(`${ADMIN_DOCS_URL}/${encodeURIComponent(source)}`, { method: "DELETE", headers: authHeaders() });
         const data = await res.json();
         if (!res.ok) {
-            alert(data.error || "Silme başarısız oldu.");
+            alert(data.error || "Delete failed.");
             rowEl.classList.remove("is-deleting");
             return;
         }
         rowEl.remove();
-        logEvent("upload", `${source.split("/").pop()} silindi (${data.chunks_deleted} chunk).`);
+        logEvent("upload", `${source.split("/").pop()} deleted (${data.chunks_deleted} chunks).`);
         const remaining = docList.querySelectorAll(".doc-row").length;
-        docCountTag.textContent = `${remaining} kaynak`;
+        docCountTag.textContent = `${remaining} sources`;
         if (!remaining) {
             docList.innerHTML = `
                 <div class="doc-list-empty">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>Henüz belge yok.</p>
+                    <p>No documents yet.</p>
                 </div>`;
         }
         loadLibrary();
     } catch {
-        alert("Silme isteği başarısız oldu.");
+        alert("Delete request failed.");
         rowEl.classList.remove("is-deleting");
     }
 }
@@ -997,7 +997,8 @@ function switchTab(tab) {
     chatView.hidden = tab !== "chat";
     libraryView.hidden = tab !== "library";
     editorView.hidden = tab !== "editor";
-    
+    closeCitePanel();
+
     tabChat.classList.toggle("is-active", tab === "chat");
     tabLibrary.classList.toggle("is-active", tab === "library");
     tabEditor.classList.toggle("is-active", tab === "editor");
@@ -1043,14 +1044,14 @@ async function loadLibrary() {
             libraryList.innerHTML = `
                 <div class="empty-state">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                    <p>No documents yet. Upload a PDF/DOCX to get started.</p>
                 </div>`;
             return;
         }
         renderDocRows(libraryList, docs, libraryDoc ? libraryDoc.source : null, selectDoc);
     } catch {
         libraryCountTag.textContent = "!";
-        libraryList.innerHTML = `<div class="empty-state"><p>Belgeler yüklenemedi.</p></div>`;
+        libraryList.innerHTML = `<div class="empty-state"><p>Could not load documents.</p></div>`;
     }
 }
 
@@ -1062,14 +1063,14 @@ async function loadEditorFileList() {
             editorFileList.innerHTML = `
                 <div class="empty-state">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                    <p>No documents yet. Upload a PDF/DOCX to get started.</p>
                 </div>`;
             return;
         }
         renderDocRows(editorFileList, docs, editorDoc ? editorDoc.source : null, selectEditorDoc);
     } catch {
         editorCountTag.textContent = "!";
-        editorFileList.innerHTML = `<div class="empty-state"><p>Belgeler yüklenemedi.</p></div>`;
+        editorFileList.innerHTML = `<div class="empty-state"><p>Could not load documents.</p></div>`;
     }
 }
 
@@ -1078,7 +1079,7 @@ async function selectDoc(source) {
     libraryDocTitle.textContent = source;
     libraryViewTabs.hidden = false;
     libraryDownloads.innerHTML = "";
-    libraryDocBody.innerHTML = `<div class="compare-loading">Yükleniyor…</div>`;
+    libraryDocBody.innerHTML = `<div class="compare-loading">Loading…</div>`;
     libraryList.querySelectorAll(".library-row").forEach((r) =>
         r.classList.toggle("is-active", r.dataset.source === source));
 
@@ -1101,16 +1102,16 @@ async function selectDoc(source) {
 
         let dl = "";
         if (libraryDoc.original_url)
-            dl += `<a class="ghost-button" href="${libraryDoc.original_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">picture_as_pdf</span> Orijinal</a>`;
+            dl += `<a class="ghost-button" href="${libraryDoc.original_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">picture_as_pdf</span> Original</a>`;
         if (libraryDoc.workspace_pdf_url)
-            dl += `<a class="ghost-button" href="${libraryDoc.workspace_pdf_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">download</span> Güncel PDF</a>`;
+            dl += `<a class="ghost-button" href="${libraryDoc.workspace_pdf_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">download</span> Updated PDF</a>`;
         if (libraryDoc.workspace_docx_url)
-            dl += `<a class="ghost-button" href="${libraryDoc.workspace_docx_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">description</span> Güncel Word</a>`;
+            dl += `<a class="ghost-button" href="${libraryDoc.workspace_docx_url}" target="_blank" rel="noopener"><span class="material-symbols-outlined">description</span> Updated Word</a>`;
         libraryDownloads.innerHTML = dl;
 
         renderDocView(libraryView_);
     } catch {
-        libraryDocBody.innerHTML = `<div class="compare-loading">Belge yüklenemedi.</div>`;
+        libraryDocBody.innerHTML = `<div class="compare-loading">Could not load document.</div>`;
     }
 }
 
@@ -1131,14 +1132,14 @@ function renderDocView(view) {
         });
         const identical = libraryDoc.original === libraryDoc.workspace;
         libraryDocBody.innerHTML = `
-            ${identical ? `<div class="compare-note">Orijinal ve çalışma alanı şu an aynı (henüz düzenleme yapılmamış).</div>` : ""}
+            ${identical ? `<div class="compare-note">Original and workspace are the same (no edits yet).</div>` : ""}
             <div class="compare-grid">
                 <div class="compare-col">
-                    <div class="compare-col-head">Orijinal <small>(salt-okunur)</small></div>
+                    <div class="compare-col-head">Original <small>(read-only)</small></div>
                     <div class="compare-pane">${left}</div>
                 </div>
                 <div class="compare-col">
-                    <div class="compare-col-head">Çalışma Alanı <small>(düzenlenen)</small></div>
+                    <div class="compare-col-head">Workspace <small>(edited)</small></div>
                     <div class="compare-pane">${right}</div>
                 </div>
             </div>`;
@@ -1231,7 +1232,7 @@ async function pollStatus() {
             systemReady = true;
             statusBanner.hidden = true;
             setControlsDisabled(false);
-            setStatus("Hazır", "");
+            setStatus("Ready", "");
             if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
             return;
         }
@@ -1239,13 +1240,13 @@ async function pollStatus() {
         // Still loading models or indexing — block input and show message.
         systemReady = false;
         statusBanner.hidden = false;
-        statusBannerText.textContent = data.message || "Sistem hazırlanıyor…";
+        statusBannerText.textContent = data.message || "System loading…";
         setControlsDisabled(true);
-        setStatus(data.phase === "indexing" ? "İndeksleniyor" : "Yükleniyor", "running");
+        setStatus(data.phase === "indexing" ? "Indexing" : "Loading", "running");
     } catch {
         // Backend not reachable yet — keep trying quietly.
         statusBanner.hidden = false;
-        statusBannerText.textContent = "Sunucuya bağlanılıyor…";
+        statusBannerText.textContent = "Connecting to server…";
         setControlsDisabled(true);
     }
 }
@@ -1318,10 +1319,10 @@ function markAgentActive(agent) {
 function markComplete() {
     agentCards.forEach((c) => { c.classList.remove("is-active", "has-error"); c.classList.add("is-complete"); });
     connectors.forEach((c) => c.classList.remove("is-active"));
-    updateProgress(100, "Cevap hazır", "Complete");
-    currentAgentLabel.textContent = "Tamamlandı";
+    updateProgress(100, "Answer ready", "Complete");
+    currentAgentLabel.textContent = "Complete";
     setStatus("Complete", "complete");
-    logEvent("done", "Akış tamamlandı, yanıt teslim edildi.");
+    logEvent("done", "Stream completed, answer delivered.");
 }
 
 function markError(message) {
@@ -1329,10 +1330,10 @@ function markError(message) {
     const lastAgent = Array.from(visitedAgents).pop();
     const errCard = lastAgent ? document.querySelector(`[data-agent="${lastAgent}"]`) : null;
     if (errCard) errCard.classList.add("has-error");
-    updateProgress(100, "Hata oluştu", "Error");
-    currentAgentLabel.textContent = "Hata";
+    updateProgress(100, "An error occurred", "Error");
+    currentAgentLabel.textContent = "Error";
     setStatus("Error", "error");
-    logEvent("error", message || "Akış hata ile sonlandı.");
+    logEvent("error", message || "Stream ended with an error.");
 }
 
 function resetRunState() {
@@ -1346,9 +1347,9 @@ function resetRunState() {
     retrievalList.innerHTML = `
         <div class="empty-state">
             <span class="material-symbols-outlined">database</span>
-            <p>Yeni bir sorgu çalıştığında kanıtlar burada listelenir.</p>
+            <p>Evidence will appear here when a new query runs.</p>
         </div>`;
-    retrievalLabel.textContent = "Boş";
+    retrievalLabel.textContent = "Empty";
     activeAgentMetric.textContent = "0";
     documentMetric.textContent    = "0";
     elapsedMetric.textContent     = "0.0s";
@@ -1362,13 +1363,13 @@ function showSearchResults(results) {
     documentMetric.textContent = String(results.length);
 
     const isWeb = results.some((r) => r.origin === "web");
-    retrievalLabel.textContent = isWeb ? `🌐 ${results.length} web kaynağı` : `${results.length} doküman`;
+    retrievalLabel.textContent = isWeb ? `🌐 ${results.length} web sources` : `${results.length} documents`;
 
     if (!results.length) {
         retrievalList.innerHTML = `
             <div class="empty-state">
                 <span class="material-symbols-outlined">travel_explore</span>
-                <p>Bu sorgu için doküman bulunamadı.</p>
+                <p>No documents found for this query.</p>
             </div>`;
         return;
     }
@@ -1429,10 +1430,26 @@ function renderAnswer(contentDiv, text, webSources, searchMeta) {
     }
 }
 
+/* Build a deduplicated citation source list that matches the backend's
+   format_docs_with_parents numbering (which deduplicates by parent_id).
+   [1] in the LLM answer → citationSources[0], etc. */
+function buildCitationSources(sources) {
+    const seen = new Set();
+    return sources.filter((src) => {
+        const pid = src.parent_id;
+        if (pid) {
+            if (seen.has(pid)) return false;
+            seen.add(pid);
+        }
+        return true;
+    });
+}
+
 /* For document-grounded answers, [n] citations map to the search_metadata
    entries. Clicking one opens a side panel with the original PDF page rendered
    to a PNG and the cited phrase highlighted in yellow. */
 function linkifyDocCitations(contentDiv, sources) {
+    const citationSources = buildCitationSources(sources);
     const walker = document.createTreeWalker(contentDiv, NodeFilter.SHOW_TEXT, null);
     const textNodes = [];
     let node;
@@ -1448,13 +1465,13 @@ function linkifyDocCitations(contentDiv, sources) {
         let m;
         while ((m = re.exec(val))) {
             const n = parseInt(m[1], 10);
-            const src = sources[n - 1];
+            const src = citationSources[n - 1];
             if (last < m.index) frag.appendChild(document.createTextNode(val.slice(last, m.index)));
             if (src) {
                 const a = document.createElement("a");
                 a.className = "cite-link cite-doc";
                 a.textContent = `[${n}]`;
-                a.title = src.title || src.source || "Atıf";
+                a.title = src.title || src.source || "Citation";
                 a.href = "#";
                 a.addEventListener("click", (e) => {
                     e.preventDefault();
@@ -1480,15 +1497,15 @@ function ensureCitePanel() {
     citePanel.className = "cite-panel";
     citePanel.innerHTML = `
         <div class="cite-panel-head">
-            <div class="cite-panel-title"><span class="material-symbols-outlined">menu_book</span> <span id="citePanelTitleText">Atıf</span></div>
+            <div class="cite-panel-title"><span class="material-symbols-outlined">menu_book</span> <span id="citePanelTitleText">Citation</span></div>
             <div class="cite-panel-nav">
-                <button id="citePrev" type="button" title="Önceki sayfa"><span class="material-symbols-outlined">chevron_left</span></button>
+                <button id="citePrev" type="button" title="Previous page"><span class="material-symbols-outlined">chevron_left</span></button>
                 <span id="citePageLabel">—</span>
-                <button id="citeNext" type="button" title="Sonraki sayfa"><span class="material-symbols-outlined">chevron_right</span></button>
+                <button id="citeNext" type="button" title="Next page"><span class="material-symbols-outlined">chevron_right</span></button>
             </div>
-            <button id="citePanelClose" type="button" class="ghost-button" title="Kapat"><span class="material-symbols-outlined">close</span></button>
+            <button id="citePanelClose" type="button" class="ghost-button" title="Close"><span class="material-symbols-outlined">close</span></button>
         </div>
-        <div class="cite-panel-loading">Yükleniyor…</div>
+        <div class="cite-panel-loading">Loading…</div>
         <div class="cite-panel-body"></div>`;
     document.body.appendChild(citePanel);
     citePanel.querySelector("#citePanelClose").addEventListener("click", closeCitePanel);
@@ -1512,15 +1529,17 @@ async function openCitationPanel(src, sources = []) {
     body.innerHTML = "";
     body.onscroll = null;
     loading.style.display = "block";
-    panel.querySelector("#citePanelTitleText").textContent = src.source || src.title || "Atıf";
+    panel.querySelector("#citePanelTitleText").textContent = src.source || src.title || "Citation";
     panel.querySelector("#citePageLabel").textContent = "…";
 
     const source = src.source || "";
-    const focusSnippet = src.content || src.snippet || "";
+    const focusSnippet = src.parent_content || src.content || src.snippet || "";
     // Every retrieved chunk that belongs to this same source document.
+    // Use parent_content (full section) when available so the entire retrieved
+    // section is highlighted in the PDF, not just the truncated snippet.
     const snippets = (sources || [])
         .filter((s) => (s.source || "") === source)
-        .map((s) => s.content || s.snippet || "")
+        .map((s) => s.parent_content || s.content || s.snippet || "")
         .filter(Boolean);
     if (!snippets.length && focusSnippet) snippets.push(focusSnippet);
 
@@ -1529,7 +1548,7 @@ async function openCitationPanel(src, sources = []) {
     const data = await fetchCiteDoc(source, snippets, focusSnippet);
     loading.style.display = "none";
     if (data.error || !Array.isArray(data.pages) || data.pages.length === 0) {
-        const msg = data.error || "Atıf görüntüsü yüklenemedi.";
+        const msg = data.error || "Could not load citation view.";
         body.innerHTML = `<div class="cite-panel-error"><span class="material-symbols-outlined">error</span> ${escapeHtml(msg)}</div>`;
         citeState = null;
         return;
@@ -1547,11 +1566,11 @@ async function fetchCiteDoc(source, snippets, focusSnippet) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            return { error: data.error || "Atıf görüntüsü oluşturulamadı." };
+            return { error: data.error || "Could not generate citation view." };
         }
         return data;
     } catch (e) {
-        return { error: "Sunucuya ulaşılamadı." };
+        return { error: "Could not reach the server." };
     }
 }
 
@@ -1567,7 +1586,7 @@ function renderCiteDoc(data) {
         const img = document.createElement("img");
         img.className = "cite-page-img";
         img.src = p.image_url;
-        img.alt = `Sayfa ${p.page}`;
+        img.alt = `Page ${p.page}`;
         img.loading = "lazy";
         fig.appendChild(img);
         body.appendChild(fig);
@@ -1639,34 +1658,34 @@ function linkifyCitations(text, sources) {
 function showWebSearchPrompt(botMessageDiv, query) {
     const contentDiv = botMessageDiv.querySelector(".message-content");
     contentDiv.textContent =
-        "Bu soruyla ilgili belgelerde yeterli bilgi bulamadım. İnternette aramamı ister misiniz?";
+        "I couldn't find enough information in the documents for this query. Would you like me to search online?";
 
     const actions = document.createElement("div");
     actions.className = "web-approval";
 
     const yesBtn = document.createElement("button");
     yesBtn.className = "web-approval-btn yes";
-    yesBtn.innerHTML = `<span class="material-symbols-outlined">travel_explore</span> Evet, internette ara`;
+    yesBtn.innerHTML = `<span class="material-symbols-outlined">travel_explore</span> Yes, search online`;
 
     const noBtn = document.createElement("button");
     noBtn.className = "web-approval-btn no";
-    noBtn.textContent = "Hayır, gerek yok";
+    noBtn.textContent = "No, that's fine";
 
     yesBtn.addEventListener("click", () => {
         actions.remove();
-        logEvent("retrieval", "Kullanıcı internet aramasını onayladı.");
+        logEvent("retrieval", "User approved web search.");
         runQuery(query, { allowWeb: true, echoUser: false });
     });
     noBtn.addEventListener("click", () => {
         actions.remove();
-        contentDiv.textContent = "Anlaşıldı, internette arama yapılmadı.";
-        logEvent("retrieval", "Kullanıcı internet aramasını reddetti.");
+        contentDiv.textContent = "Understood, no web search performed.";
+        logEvent("retrieval", "User declined web search.");
     });
 
     actions.appendChild(yesBtn);
     actions.appendChild(noBtn);
     botMessageDiv.appendChild(actions);
-    logEvent("retrieval", "Belgelerde bulunamadı — kullanıcı onayı bekleniyor.");
+    logEvent("retrieval", "Not found in documents — awaiting user approval.");
     scrollToBottom();
 }
 
@@ -1784,7 +1803,7 @@ function logEvent(type, message) {
     if (!eventLog) return;
     const item = document.createElement("div");
     item.className = `event-item ${type === "error" ? "error" : type === "done" ? "done" : ""}`;
-    const time = new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const time = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     item.innerHTML = `<span>${time} | ${escapeHtml(type)}</span><p>${escapeHtml(message)}</p>`;
     eventLog.appendChild(item);
     eventLog.scrollTop = eventLog.scrollHeight;
@@ -1836,17 +1855,17 @@ function generateUUID() {
 ═══════════════════════════════════════════════════════════════ */
 const WELCOME_HTML = `
     <div class="welcome">
-        <p class="welcome-eyebrow">Merhaba 👋</p>
-        <h1 class="welcome-title">Bugün neyi araştıralım?</h1>
+        <p class="welcome-eyebrow">Hello 👋</p>
+        <h1 class="welcome-title">What shall we explore today?</h1>
         <p class="welcome-lead">
-            Bir soru yazın. Supervisor yönlendirir, Researcher kanıt toplar,
-            Writer yanıtı kurar, Reviewer kalite kontrol yapar — her adımı
-            sağ tarafta canlı izleyebilirsiniz.
+            Type a question. Supervisor routes it, Researcher gathers evidence,
+            Writer composes the answer, Reviewer does quality control — watch
+            every step live on the right.
         </p>
         <div class="suggestion-row">
-            <button class="suggestion" type="button">Belgelerdeki ana bulguları özetle</button>
-            <button class="suggestion" type="button">İki kaynağı karşılaştır</button>
-            <button class="suggestion" type="button">Kısa bir kronoloji çıkar</button>
+            <button class="suggestion" type="button">Summarize the main findings in the documents</button>
+            <button class="suggestion" type="button">Compare two sources</button>
+            <button class="suggestion" type="button">Extract a brief timeline</button>
         </div>
     </div>`;
 
@@ -1868,9 +1887,9 @@ newSessionButton.addEventListener("click", () => {
     bindSuggestions();
     eventLog.innerHTML = "";
     resetRunState();
-    updateProgress(0, "Hazır", "Idle");
-    setStatus("Hazır", "");
-    logEvent("idle", "Yeni oturum başlatıldı.");
+    updateProgress(0, "Ready", "Idle");
+    setStatus("Ready", "");
+    logEvent("idle", "New session started.");
     userInput.focus();
 });
 
@@ -1956,7 +1975,7 @@ document.querySelectorAll(".color-swatch").forEach((swatch) => {
 
 // Add Chart action
 document.getElementById("editorAddChartBtn").addEventListener("click", () => {
-    editorUserInput.value = "@update bu bölüme bir grafik ekle: [Tablo ismi]";
+    editorUserInput.value = "@update add a chart to this section: [Table name]";
     editorUserInput.focus();
     autoResizeEditorInput();
 });
@@ -2089,7 +2108,7 @@ async function runAutoSave() {
         });
         if (!res.ok) {
             const errData = await res.json();
-            throw new Error(errData.error || "Kaydedilemedi.");
+            throw new Error(errData.error || "Could not save.");
         }
         const data = await res.json();
         editorDoc.markdown = currentMd;
@@ -2105,18 +2124,18 @@ function setEditorSaveStatus(state, errMsg = "") {
     const textEl = editorSaveStatus.querySelector(".status-text");
     editorSaveStatus.hidden = false;
     if (state === "saved") {
-        textEl.textContent = "Kaydedildi";
+        textEl.textContent = "Saved";
         setTimeout(() => {
             if (editorSaveStatus.classList.contains("saved")) {
                 editorSaveStatus.hidden = true;
             }
         }, 3000);
     } else if (state === "saving") {
-        textEl.textContent = "Kaydediliyor…";
+        textEl.textContent = "Saving…";
     } else if (state === "dirty") {
-        textEl.textContent = "Kaydedilmemiş değişiklikler var";
+        textEl.textContent = "Unsaved changes";
     } else if (state === "error") {
-        textEl.textContent = `Hata: ${errMsg || "Kaydedilemedi"}`;
+        textEl.textContent = `Error: ${errMsg || "Could not save"}`;
     }
 }
 
@@ -2256,11 +2275,11 @@ function showInlineEditPreview(payload) {
     const approveBtn = document.createElement("button");
     approveBtn.type = "button";
     approveBtn.className = "primary-button";
-    approveBtn.innerHTML = `<span class="material-symbols-outlined">check</span> Onayla`;
+    approveBtn.innerHTML = `<span class="material-symbols-outlined">check</span> Approve`;
     const rejectBtn = document.createElement("button");
     rejectBtn.type = "button";
     rejectBtn.className = "ghost-button";
-    rejectBtn.innerHTML = `<span class="material-symbols-outlined">close</span> Reddet`;
+    rejectBtn.innerHTML = `<span class="material-symbols-outlined">close</span> Reject`;
     actions.appendChild(rejectBtn);
     actions.appendChild(approveBtn);
     diffWrapper.appendChild(actions);
@@ -2278,8 +2297,8 @@ function showInlineEditPreview(payload) {
                 body: JSON.stringify({ token: payload.token }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Onay başarısız.");
-            
+            if (!res.ok) throw new Error(data.error || "Approval failed.");
+
             const tempDiv = document.createElement("div");
             tempDiv.innerHTML = renderMarkdown(afterSectionMd);
             while (tempDiv.firstChild) {
@@ -2294,7 +2313,7 @@ function showInlineEditPreview(payload) {
             loadLibrary();
             loadEditorFileList();
         } catch (err) {
-            alert(`Hata: ${err.message}`);
+            alert(`Error: ${err.message}`);
             approveBtn.disabled = false; rejectBtn.disabled = false;
         }
     });
@@ -2361,10 +2380,10 @@ function showWholeDocumentDiff(beforeMd, afterMd) {
     }
     
     actions.innerHTML = `
-        <span class="diff-bar-text">Yapay zeka değişiklikleri önerdi. Değişiklikleri inceleyin:</span>
+        <span class="diff-bar-text">AI has suggested changes. Review the changes:</span>
         <div class="diff-bar-buttons">
-            <button class="primary-button" id="editorApproveDiffBtn" type="button"><span class="material-symbols-outlined">check</span> Değişiklikleri Onayla</button>
-            <button class="ghost-button" id="editorRejectDiffBtn" type="button"><span class="material-symbols-outlined">close</span> Geri Al (Reddet)</button>
+            <button class="primary-button" id="editorApproveDiffBtn" type="button"><span class="material-symbols-outlined">check</span> Accept Changes</button>
+            <button class="ghost-button" id="editorRejectDiffBtn" type="button"><span class="material-symbols-outlined">close</span> Revert (Reject)</button>
         </div>
     `;
     actions.hidden = false;
@@ -2405,7 +2424,7 @@ async function sendEditorMessage() {
     editorPage.innerHTML = `
         <div class="editor-loading-overlay" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; gap: 16px; color: var(--muted);">
             <span class="material-symbols-outlined spin" style="font-size: 48px; animation: spin 2s linear infinite;">sync</span>
-            <p style="font-size: 14px; font-weight: 500;">Yapay zeka değişiklikleri hesaplıyor, lütfen bekleyin…</p>
+            <p style="font-size: 14px; font-weight: 500;">AI is computing changes, please wait…</p>
         </div>
     `;
     
@@ -2421,7 +2440,7 @@ async function sendEditorMessage() {
         
         if (!res.ok) {
             const data = await res.json();
-            throw new Error(data.error || "Düzenleme isteği başarısız.");
+            throw new Error(data.error || "Edit request failed.");
         }
         
         const data = await res.json();
@@ -2474,7 +2493,7 @@ async function selectEditorDoc(source) {
         setEditorSaveStatus("saved");
     } catch (err) {
         console.error("selectEditorDoc error:", err);
-        editorPage.innerHTML = `<p style="color: var(--danger); padding: 20px;">Belge yüklenemedi.</p>`;
+        editorPage.innerHTML = `<p style="color: var(--danger); padding: 20px;">Could not load document.</p>`;
         editorPage.hidden = false;
     }
 }
@@ -2484,8 +2503,8 @@ chatForm.addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); 
 window.addEventListener("load", () => {
     bindSuggestions();
     scrollToBottom();
-    updateProgress(0, "Hazır", "Idle");
-    logEvent("idle", "Sistem durumu kontrol ediliyor…");
+    updateProgress(0, "Ready", "Idle");
+    logEvent("idle", "Checking system status…");
 
     // Gate input until models are loaded and the index is built.
     pollStatus();

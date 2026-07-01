@@ -1,8 +1,8 @@
 """Code interpreter node — real arithmetic & charts over stored table data.
 
 When a user asks something that needs math or a chart over financial/tabular
-data ("son 3 yılın kâr marjı ortalamasını bul", "bu verileri pasta grafiğine dök
-ve dökümana ekle"), the Researcher gathers the relevant tables and the
+data ("find the average profit margin for the last 3 years", "turn this data into
+a pie chart and add it to the document"), the Researcher gathers the relevant tables and the
 supervisor routes the turn through this node BEFORE the writer.
 
 Execution model: a sandboxed subprocess running a stock python interpreter with
@@ -44,7 +44,7 @@ CODEGEN_SYSTEM_PROMPT = """You generate a single, self-contained Python snippet 
 Environment available inside the snippet:
 - `tables`: dict mapping a table name (e.g. "table_1") to a pandas DataFrame of that table.
 - `matplotlib`/`pylab` as `plt` for charts. Charts MUST be saved with the exact path given in `CHART_PATH`.
-- `result`: set this variable to a short string (the answer to print back to the user). For calculations, prefer a concise human-readable summary (e.g. "Ortalama kâr marjı: %18.4").
+- `result`: set this variable to a short string (the answer to print back to the user). For calculations, prefer a concise human-readable summary (e.g. "Average profit margin: 18.4%").
 
 Hard rules:
 - Use ONLY the tables provided. Coerce numeric-looking strings with `pd.to_numeric(..., errors="coerce")`.
@@ -170,13 +170,13 @@ def _run_snippet(snippet: str, tables: list[dict], chart_path: str) -> tuple[str
             timeout=_EXEC_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return ("Hesaplama zaman aşımına uğradı.", False)
+        return ("Calculation timed out.", False)
     except Exception as exc:
-        return (f"Kod çalıştırılamadı: {exc}", False)
+        return (f"Could not run code: {exc}", False)
 
     if proc.returncode != 0:
         err = (proc.stderr or "").strip().splitlines()
-        return (f"Kod hatası: {' '.join(err[-3:])[:300]}", False)
+        return (f"Code error: {' '.join(err[-3:])[:300]}", False)
 
     # Parse the marker line for the result.
     for line in reversed(proc.stdout.splitlines()):

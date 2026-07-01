@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG Agent · Çok Ajanlı Asistan</title>
+    <title>RAG Agent · Multi-Agent Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
@@ -18,38 +18,38 @@
             </div>
             <div class="brand-text">
                 <p class="brand-title">RAG Agent</p>
-                <p class="brand-subtitle">Çok ajanlı asistan</p>
+                <p class="brand-subtitle">Multi-agent assistant</p>
             </div>
         </div>
 
-        <nav class="top-tabs" aria-label="Görünüm">
+        <nav class="top-tabs" aria-label="View">
             <button class="top-tab is-active" id="tabChat" type="button" data-tab="chat">
-                <span class="material-symbols-outlined">forum</span> Sohbet
+                <span class="material-symbols-outlined">forum</span> Chat
             </button>
             <button class="top-tab" id="tabLibrary" type="button" data-tab="library">
-                <span class="material-symbols-outlined">menu_book</span> Kitaplık
+                <span class="material-symbols-outlined">menu_book</span> Library
             </button>
             <button class="top-tab" id="tabEditor" type="button" data-tab="editor">
-                <span class="material-symbols-outlined">edit_document</span> Dosya düzenleme
+                <span class="material-symbols-outlined">edit_document</span> File Editor
             </button>
         </nav>
 
         <div class="top-actions">
             <span class="status-pill" id="statusBadge">
                 <span class="status-dot"></span>
-                Hazır
+                Ready
             </span>
             <button class="ghost-button" id="uploadButton" type="button">
                 <span class="material-symbols-outlined">upload_file</span>
-                Belge yükle
+                Upload document
             </button>
             <button class="ghost-button" id="newSessionButton" type="button">
                 <span class="material-symbols-outlined">add</span>
-                Yeni oturum
+                New session
             </button>
             <button class="ghost-button" id="authButton" type="button">
                 <span class="material-symbols-outlined">login</span>
-                <span id="authButtonLabel">Giriş yap</span>
+                <span id="authButtonLabel">Log in</span>
             </button>
         </div>
     </header>
@@ -57,54 +57,54 @@
     <!-- ── Index / model status banner ──────────────────────────── -->
     <div id="statusBanner" class="status-banner" hidden>
         <span class="status-banner-spinner" aria-hidden="true"></span>
-        <span id="statusBannerText">Belgeler indeksleniyor, lütfen bekleyin…</span>
+        <span id="statusBannerText">Indexing documents, please wait…</span>
     </div>
 
     <main class="workspace" id="chatView">
         <!-- ── Conversation ───────────────────────────────────────── -->
-        <section class="chat-panel" aria-label="Konuşma">
+        <section class="chat-panel" aria-label="Conversation">
             <div class="chat-messages" id="chatMessages">
                 <div class="welcome">
-                    <p class="welcome-eyebrow">Merhaba 👋</p>
-                    <h1 class="welcome-title">Bugün neyi araştıralım?</h1>
+                    <p class="welcome-eyebrow">Hello 👋</p>
+                    <h1 class="welcome-title">What shall we research today?</h1>
                     <p class="welcome-lead">
-                        Bir soru yazın. Supervisor yönlendirir, Researcher kanıt toplar,
-                        Writer yanıtı kurar, Reviewer kalite kontrol yapar — her adımı
-                        sağ tarafta canlı izleyebilirsiniz.
+                        Ask a question. Supervisor routes, Researcher gathers evidence,
+                        Writer builds the answer, Reviewer quality-checks — watch every
+                        step live on the right.
                     </p>
                     <div class="suggestion-row">
-                        <button class="suggestion" type="button">Belgelerdeki ana bulguları özetle</button>
-                        <button class="suggestion" type="button">İki kaynağı karşılaştır</button>
-                        <button class="suggestion" type="button">Kısa bir kronoloji çıkar</button>
+                        <button class="suggestion" type="button">Summarize the key findings in the documents</button>
+                        <button class="suggestion" type="button">Compare two sources</button>
+                        <button class="suggestion" type="button">Extract a brief timeline</button>
                     </div>
                 </div>
             </div>
 
             <form class="composer" id="chatForm">
                 <div id="attachPreview" class="attach-preview" hidden></div>
-                <button id="attachButton" type="button" class="attach-button" aria-label="Görsel ekle" title="Görsel ekle (yapıştırabilirsiniz)">
+                <button id="attachButton" type="button" class="attach-button" aria-label="Attach image" title="Attach image (you can paste)">
                     <span class="material-symbols-outlined">image</span>
                 </button>
                 <input id="imageInput" type="file" accept="image/*" multiple hidden>
                 <div class="composer-input-wrap">
-                    <textarea id="userInput" placeholder="Bir mesaj yazın…  (bilgi eklemek/güncellemek için @update ile başlayın)" rows="1"></textarea>
+                    <textarea id="userInput" placeholder="Write a message…  (start with @update to add/update knowledge)" rows="1"></textarea>
                     <div id="suggestionsDropdown" class="suggestions-dropdown" hidden></div>
                 </div>
-                <button id="sendButton" type="submit" aria-label="Gönder">
+                <button id="sendButton" type="submit" aria-label="Send">
                     <span class="material-symbols-outlined">arrow_upward</span>
                 </button>
             </form>
         </section>
 
         <!-- ── Agent rail ─────────────────────────────────────────── -->
-        <aside class="rail" aria-label="Ajan akışı">
+        <aside class="rail" aria-label="Agent flow">
             <section class="rail-card flow-card">
                 <div class="rail-head">
                     <div>
-                        <h2>Ajan akışı</h2>
-                        <p id="currentAgentLabel">Beklemede</p>
+                        <h2>Agent flow</h2>
+                        <p id="currentAgentLabel">Pending</p>
                     </div>
-                    <div class="hero-meter" aria-label="İlerleme">
+                    <div class="hero-meter" aria-label="Progress">
                         <span class="meter-value" id="progressPercent">0%</span>
                     </div>
                 </div>
@@ -114,7 +114,7 @@
                         <span class="agent-icon material-symbols-outlined">manage_accounts</span>
                         <div class="agent-text">
                             <p>Supervisor</p>
-                            <span id="supervisorStatus">Sıradaki ajanı seçer</span>
+                            <span id="supervisorStatus">Selects the next agent</span>
                         </div>
                     </article>
                     <div class="flow-connector" aria-hidden="true"></div>
@@ -122,7 +122,7 @@
                         <span class="agent-icon material-symbols-outlined">manage_search</span>
                         <div class="agent-text">
                             <p>Researcher</p>
-                            <span id="researcherStatus">Vektör arama yapar</span>
+                            <span id="researcherStatus">Searches vector database</span>
                         </div>
                     </article>
                     <div class="flow-connector" aria-hidden="true"></div>
@@ -130,7 +130,7 @@
                         <span class="agent-icon material-symbols-outlined">edit_note</span>
                         <div class="agent-text">
                             <p>Writer</p>
-                            <span id="writerStatus">Yanıtı sentezler</span>
+                            <span id="writerStatus">Synthesizes the answer</span>
                         </div>
                     </article>
                     <div class="flow-connector" aria-hidden="true"></div>
@@ -138,7 +138,7 @@
                         <span class="agent-icon material-symbols-outlined">fact_check</span>
                         <div class="agent-text">
                             <p>Reviewer</p>
-                            <span id="reviewerStatus">Kaliteyi onaylar</span>
+                            <span id="reviewerStatus">Approves quality</span>
                         </div>
                     </article>
                     <div class="flow-connector" aria-hidden="true"></div>
@@ -146,7 +146,7 @@
                         <span class="agent-icon material-symbols-outlined">drive_file_rename_outline</span>
                         <div class="agent-text">
                             <p>Editor</p>
-                            <span id="editorStatus">@update ile bilgi günceller</span>
+                            <span id="editorStatus">Updates knowledge via @update</span>
                         </div>
                     </article>
                 </div>
@@ -156,7 +156,7 @@
                         <div class="progress-fill" id="progressBar"></div>
                     </div>
                     <div class="progress-meta">
-                        <span id="progressLabel">Hazır</span>
+                        <span id="progressLabel">Ready</span>
                         <span id="flowStateText">Idle</span>
                     </div>
                 </div>
@@ -164,35 +164,35 @@
                 <div class="metric-row">
                     <div class="metric">
                         <strong id="activeAgentMetric">0</strong>
-                        <small>Çalışan düğüm</small>
+                        <small>Active node</small>
                     </div>
                     <div class="metric">
                         <strong id="documentMetric">0</strong>
-                        <small>Doküman</small>
+                        <small>Documents</small>
                     </div>
                     <div class="metric">
                         <strong id="elapsedMetric">0.0s</strong>
-                        <small>Süre</small>
+                        <small>Elapsed</small>
                     </div>
                 </div>
             </section>
 
             <section class="rail-card">
                 <div class="rail-head">
-                    <h2>Kanıtlar</h2>
-                    <span class="tag" id="retrievalLabel">Boş</span>
+                    <h2>Evidence</h2>
+                    <span class="tag" id="retrievalLabel">Empty</span>
                 </div>
                 <div class="retrieval-list" id="retrievalList">
                     <div class="empty-state">
                         <span class="material-symbols-outlined">database</span>
-                        <p>Bir sorgu çalıştığında bulunan dokümanlar burada listelenir.</p>
+                        <p>Documents found when a query runs will be listed here.</p>
                     </div>
                 </div>
             </section>
 
             <section class="rail-card">
                 <div class="rail-head">
-                    <h2>Olay akışı</h2>
+                    <h2>Event stream</h2>
                     <span class="tag">Stream</span>
                 </div>
                 <div class="event-log" id="eventLog"></div>
@@ -200,51 +200,51 @@
         </aside>
     </main>
 
-    <!-- ── Library view (Kitaplık tab) ──────────────────────────── -->
+    <!-- ── Library view ──────────────────────────────────────────── -->
     <main class="library-view" id="libraryView" hidden>
         <aside class="library-sidebar">
             <div class="library-sidebar-head">
-                <h2>Kitaplık</h2>
+                <h2>Library</h2>
                 <span class="tag" id="libraryCountTag">0</span>
             </div>
             <div class="library-list" id="libraryList">
                 <div class="empty-state">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                    <p>No documents yet. Add PDF/DOCX via "Upload document".</p>
                 </div>
             </div>
         </aside>
 
         <section class="library-content">
             <div class="library-content-head">
-                <h2 id="libraryDocTitle">Bir belge seçin</h2>
+                <h2 id="libraryDocTitle">Select a document</h2>
                 <div class="library-view-tabs" id="libraryViewTabs" hidden>
-                    <button class="lib-vtab" type="button" data-view="originals">Orijinal</button>
-                    <button class="lib-vtab is-active" type="button" data-view="workspace">Çalışma Alanı</button>
-                    <button class="lib-vtab" type="button" data-view="compare">Karşılaştır</button>
+                    <button class="lib-vtab" type="button" data-view="originals">Original</button>
+                    <button class="lib-vtab is-active" type="button" data-view="workspace">Workspace</button>
+                    <button class="lib-vtab" type="button" data-view="compare">Compare</button>
                 </div>
                 <div class="library-downloads" id="libraryDownloads"></div>
             </div>
             <div class="library-doc-body" id="libraryDocBody">
                 <div class="empty-state">
                     <span class="material-symbols-outlined">menu_book</span>
-                    <p>Soldan bir belge seçerek orijinal ve düzenlenmiş hâlini görüntüleyin veya karşılaştırın.</p>
+                    <p>Select a document on the left to view the original and edited versions or compare them.</p>
                 </div>
             </div>
         </section>
     </main>
 
-    <!-- ── Editor view (Dosya düzenleme tab) ────────────────────── -->
+    <!-- ── Editor view (File Editor tab) ────────────────────────── -->
     <main class="editor-view" id="editorView" hidden>
         <aside class="library-sidebar">
             <div class="library-sidebar-head">
-                <h2>Belgeler</h2>
+                <h2>Documents</h2>
                 <span class="tag" id="editorCountTag">0</span>
             </div>
             <div class="library-list" id="editorFileList">
                 <div class="empty-state">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>Henüz belge yok. "Belge yükle" ile PDF/DOCX ekleyin.</p>
+                    <p>No documents yet. Add PDF/DOCX via "Upload document".</p>
                 </div>
             </div>
         </aside>
@@ -252,22 +252,22 @@
         <section class="editor-content">
             <div class="editor-toolbar" id="editorToolbar">
                 <div class="toolbar-group">
-                    <button class="ghost-button toolbar-btn" data-cmd="undo" title="Geri al" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="undo" title="Undo" type="button">
                         <span class="material-symbols-outlined">undo</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="redo" title="Yinele" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="redo" title="Redo" type="button">
                         <span class="material-symbols-outlined">redo</span>
                     </button>
                 </div>
-                
+
                 <div class="toolbar-divider"></div>
-                
+
                 <div class="toolbar-group">
-                    <button class="ghost-button toolbar-btn" id="editorZoomOut" title="Uzaklaştır" type="button">
+                    <button class="ghost-button toolbar-btn" id="editorZoomOut" title="Zoom out" type="button">
                         <span class="material-symbols-outlined">zoom_out</span>
                     </button>
                     <span class="zoom-value" id="editorZoomVal">100%</span>
-                    <button class="ghost-button toolbar-btn" id="editorZoomIn" title="Yakınlaştır" type="button">
+                    <button class="ghost-button toolbar-btn" id="editorZoomIn" title="Zoom in" type="button">
                         <span class="material-symbols-outlined">zoom_in</span>
                     </button>
                 </div>
@@ -276,26 +276,26 @@
 
                 <div class="toolbar-group">
                     <select class="toolbar-select" id="editorHeadingSelect">
-                        <option value="p">Paragraf</option>
-                        <option value="h1">Başlık 1</option>
-                        <option value="h2">Başlık 2</option>
-                        <option value="h3">Başlık 3</option>
+                        <option value="p">Paragraph</option>
+                        <option value="h1">Heading 1</option>
+                        <option value="h2">Heading 2</option>
+                        <option value="h3">Heading 3</option>
                     </select>
                 </div>
 
                 <div class="toolbar-divider"></div>
 
                 <div class="toolbar-group">
-                    <button class="ghost-button toolbar-btn" data-cmd="bold" title="Kalın (Ctrl+B)" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="bold" title="Bold (Ctrl+B)" type="button">
                         <span class="material-symbols-outlined">format_bold</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="italic" title="İtalik (Ctrl+I)" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="italic" title="Italic (Ctrl+I)" type="button">
                         <span class="material-symbols-outlined">format_italic</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="underline" title="Altı Çizili (Ctrl+U)" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="underline" title="Underline (Ctrl+U)" type="button">
                         <span class="material-symbols-outlined">format_underlined</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="strikeThrough" title="Üstü Çizili" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="strikeThrough" title="Strikethrough" type="button">
                         <span class="material-symbols-outlined">format_strikethrough</span>
                     </button>
                 </div>
@@ -304,15 +304,15 @@
 
                 <div class="toolbar-group">
                     <div class="highlight-dropdown-container" style="position: relative;">
-                        <button class="ghost-button toolbar-btn" id="editorHighlightBtn" title="Vurgu Rengi" type="button">
+                        <button class="ghost-button toolbar-btn" id="editorHighlightBtn" title="Highlight color" type="button">
                             <span class="material-symbols-outlined">border_color</span>
                         </button>
                         <div class="highlight-popover" id="editorHighlightPopover" hidden>
-                            <button class="color-swatch" data-color="yellow" style="background-color: #fef08a;" title="Sarı"></button>
-                            <button class="color-swatch" data-color="green" style="background-color: #bbf7d0;" title="Yeşil"></button>
-                            <button class="color-swatch" data-color="blue" style="background-color: #bfdbfe;" title="Mavi"></button>
-                            <button class="color-swatch" data-color="red" style="background-color: #fecaca;" title="Kırmızı"></button>
-                            <button class="color-swatch" data-color="clear" style="background-color: #fff; border: 1px solid var(--border);" title="Temizle">✕</button>
+                            <button class="color-swatch" data-color="yellow" style="background-color: #fef08a;" title="Yellow"></button>
+                            <button class="color-swatch" data-color="green" style="background-color: #bbf7d0;" title="Green"></button>
+                            <button class="color-swatch" data-color="blue" style="background-color: #bfdbfe;" title="Blue"></button>
+                            <button class="color-swatch" data-color="red" style="background-color: #fecaca;" title="Red"></button>
+                            <button class="color-swatch" data-color="clear" style="background-color: #fff; border: 1px solid var(--border);" title="Clear">✕</button>
                         </div>
                     </div>
                 </div>
@@ -320,10 +320,10 @@
                 <div class="toolbar-divider"></div>
 
                 <div class="toolbar-group">
-                    <button class="ghost-button toolbar-btn" data-cmd="insertUnorderedList" title="Madde İşaretli Liste" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="insertUnorderedList" title="Bullet list" type="button">
                         <span class="material-symbols-outlined">format_list_bulleted</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="insertOrderedList" title="Numaralı Liste" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="insertOrderedList" title="Numbered list" type="button">
                         <span class="material-symbols-outlined">format_list_numbered</span>
                     </button>
                 </div>
@@ -331,13 +331,13 @@
                 <div class="toolbar-divider"></div>
 
                 <div class="toolbar-group">
-                    <button class="ghost-button toolbar-btn" data-cmd="justifyLeft" title="Sola Hizala" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="justifyLeft" title="Align left" type="button">
                         <span class="material-symbols-outlined">format_align_left</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="justifyCenter" title="Ortala" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="justifyCenter" title="Center" type="button">
                         <span class="material-symbols-outlined">format_align_center</span>
                     </button>
-                    <button class="ghost-button toolbar-btn" data-cmd="justifyRight" title="Sağa Hizala" type="button">
+                    <button class="ghost-button toolbar-btn" data-cmd="justifyRight" title="Align right" type="button">
                         <span class="material-symbols-outlined">format_align_right</span>
                     </button>
                 </div>
@@ -345,35 +345,35 @@
                 <div class="toolbar-divider"></div>
 
                 <div class="toolbar-group">
-                    <button class="ghost-button toolbar-btn" id="editorAddChartBtn" title="Grafik Ekle" type="button">
+                    <button class="ghost-button toolbar-btn" id="editorAddChartBtn" title="Insert chart" type="button">
                         <span class="material-symbols-outlined">insert_chart</span>
                     </button>
                 </div>
 
                 <div class="toolbar-group sa-right" style="margin-left: auto;">
-                    <button class="primary-button toolbar-btn-download" id="editorDownloadDocx" title="Word Dosyası Olarak İndir" type="button" disabled>
-                        <span class="material-symbols-outlined">download</span> İndir (.docx)
+                    <button class="primary-button toolbar-btn-download" id="editorDownloadDocx" title="Download as Word file" type="button" disabled>
+                        <span class="material-symbols-outlined">download</span> Download (.docx)
                     </button>
                 </div>
             </div>
             <div class="editor-body">
                 <div class="editor-page-wrapper">
-                    <div class="editor-page" id="editorPage" contenteditable="true" placeholder="İçerik yükleniyor veya boş..." hidden></div>
+                    <div class="editor-page" id="editorPage" contenteditable="true" placeholder="Loading content or empty…" hidden></div>
                 </div>
             </div>
-            
+
             <div class="editor-save-container">
                 <span class="editor-save-pill" id="editorSaveStatus" hidden>
                     <span class="status-dot"></span>
-                    <span class="status-text">Kaydedildi</span>
+                    <span class="status-text">Saved</span>
                 </span>
             </div>
 
             <form class="composer editor-chat-composer" id="editorChatForm">
                 <div class="composer-input-wrap">
-                    <textarea id="editorUserInput" placeholder="AI'ya başka ne değiştirmesi gerektiğini söyleyin… (örn: @update ile başlayın)" rows="1"></textarea>
+                    <textarea id="editorUserInput" placeholder="Tell the AI what else to change… (e.g. start with @update)" rows="1"></textarea>
                 </div>
-                <button id="editorSendButton" type="submit" aria-label="Gönder">
+                <button id="editorSendButton" type="submit" aria-label="Send">
                     <span class="material-symbols-outlined">arrow_upward</span>
                 </button>
             </form>
@@ -384,16 +384,16 @@
     <div id="uploadModal" class="modal-overlay" hidden>
         <div class="modal-box">
             <div class="modal-header">
-                <h2>Belge Yükle</h2>
-                <button class="modal-close" id="uploadModalClose" type="button" aria-label="Kapat">
+                <h2>Upload Document</h2>
+                <button class="modal-close" id="uploadModalClose" type="button" aria-label="Close">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
 
             <div class="upload-area" id="uploadArea">
                 <span class="material-symbols-outlined">cloud_upload</span>
-                <p>PDF veya DOCX dosyasını buraya sürükleyin<br>ya da tıklayarak seçin</p>
-                <small>Maksimum 50 MB</small>
+                <p>Drag a PDF or DOCX file here<br>or click to select</p>
+                <small>Maximum 50 MB</small>
             </div>
             <input type="file" id="fileInput" accept=".pdf,.docx" hidden>
 
@@ -401,13 +401,13 @@
 
             <div class="doc-list-section">
                 <div class="doc-list-head">
-                    <h3>İndekslenmiş Belgeler</h3>
-                    <span class="tag" id="docCountTag">Yükleniyor…</span>
+                    <h3>Indexed Documents</h3>
+                    <span class="tag" id="docCountTag">Loading…</span>
                 </div>
                 <div class="doc-list" id="docList">
                     <div class="doc-list-empty">
                         <span class="material-symbols-outlined">folder_open</span>
-                        <p>Henüz belge yok.</p>
+                        <p>No documents yet.</p>
                     </div>
                 </div>
             </div>
@@ -418,21 +418,21 @@
     <div id="authModal" class="modal-overlay" hidden>
         <div class="modal-box modal-box-narrow">
             <div class="modal-header">
-                <h2>Giriş Yap</h2>
-                <button class="modal-close" id="authModalClose" type="button" aria-label="Kapat">
+                <h2>Log In</h2>
+                <button class="modal-close" id="authModalClose" type="button" aria-label="Close">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
 
-            <p class="auth-hint">@update ile belge güncellemek için giriş yapmanız gerekir.</p>
+            <p class="auth-hint">Login is required to update documents with @update.</p>
 
             <form id="authForm" class="auth-form">
-                <label for="authUsername">Kullanıcı adı</label>
+                <label for="authUsername">Username</label>
                 <input type="text" id="authUsername" autocomplete="username" required>
-                <label for="authPassword">Parola</label>
+                <label for="authPassword">Password</label>
                 <input type="password" id="authPassword" autocomplete="current-password" required>
                 <div id="authError" class="auth-error" hidden></div>
-                <button type="submit" class="primary-button" id="authSubmit">Giriş yap</button>
+                <button type="submit" class="primary-button" id="authSubmit">Log in</button>
             </form>
         </div>
     </div>

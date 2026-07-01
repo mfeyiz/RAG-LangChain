@@ -79,13 +79,13 @@ def render_highlighted_page(
     pdf_path = paths.original_doc_path(source)
     if pdf_path is None or pdf_path.suffix.lower() != ".pdf":
         # DOCX original: we don't page-render it. Fallback: return nothing.
-        return {"error": "Highlights yalnızca PDF orijinalleri için destekleniyor."}
+        return {"error": "Highlights are only supported for original PDF files."}
     if not pdf_path.exists():
-        return {"error": "Orijinal PDF bulunamadı."}
+        return {"error": "Original PDF not found."}
 
     target_page = page_index if page_index is not None else locate_page(pdf_path, snippet)
     if target_page is None:
-        return {"error": "Atıf metni orijinal PDF içinde bulunamadı.", "page": None}
+        return {"error": "Citation text not found in original PDF.", "page": None}
 
     ensure_dir()
     doc = fitz.open(str(pdf_path))
@@ -151,9 +151,9 @@ def render_highlighted_document(
 
     pdf_path = paths.original_doc_path(source)
     if pdf_path is None or pdf_path.suffix.lower() != ".pdf":
-        return {"error": "Highlights yalnızca PDF orijinalleri için destekleniyor."}
+        return {"error": "Highlights are only supported for original PDF files."}
     if not pdf_path.exists():
-        return {"error": "Orijinal PDF bulunamadı."}
+        return {"error": "Original PDF not found."}
 
     ensure_dir()
     stem = paths.stem_of(source)
@@ -176,7 +176,7 @@ def render_highlighted_document(
         doc = fitz.open(str(pdf_path))
     except Exception as exc:
         print(f"[Citation] could not open PDF {pdf_path}: {exc}")
-        return {"error": "Orijinal PDF açılamadı."}
+        return {"error": "Could not open original PDF."}
 
     try:
         total = doc.page_count
@@ -209,7 +209,7 @@ def render_highlighted_document(
                 continue
 
         if not pages:
-            return {"error": "Orijinal PDF işlenemedi."}
+            return {"error": "Could not process original PDF."}
 
         return {
             "total_pages": total,
@@ -221,20 +221,26 @@ def render_highlighted_document(
 
 
 def _search_phrases(snippet: str) -> list[str]:
-    """Distinctive substrings to highlight, longest first."""
+    """Non-overlapping 12-word phrases that together cover the entire chunk.
+
+    Using a sliding window with step=10 (2-word overlap between consecutive
+    phrases) we generate enough phrases to highlight the whole retrieved
+    section, not just the first matching sentence.
+    """
     words = _normalize(snippet).split()
+    if not words:
+        return []
     phrases = []
-    for n in (12, 8, 6):
-        for i in range(0, max(0, len(words) - n + 1)):
-            phrases.append(" ".join(words[i:i + n]))
-    # Also the whole thing trimmed.
-    if snippet.strip():
-        phrases.append(" ".join(words[:40]))
-    # De-dup, keep order, drop empties.
+    step = 10  # advance by 10 words; consecutive phrases share 2-word overlap
+    for i in range(0, len(words), step):
+        block = words[i : i + 12]
+        if len(block) >= 5:
+            phrases.append(" ".join(block))
+    # De-dup, keep order.
     seen: set[str] = set()
     out: list[str] = []
     for p in phrases:
-        if p and p not in seen and len(p) >= 5:
+        if p and p not in seen:
             seen.add(p)
             out.append(p)
-    return out[:6]
+    return out

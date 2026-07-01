@@ -1,7 +1,7 @@
 """Structured table sidecars for the workspace channel.
 
-Markdown tables are great for display, but doing math over them ("son 3 yılın kâr
-marjı ortalaması") needs structured data. During ingestion we parse every pipe
+Markdown tables are great for display, but doing math over them ("average profit
+margin over the last 3 years") needs structured data. During ingestion we parse every pipe
 table out of the converted Markdown and persist it as both CSV and JSON under
 ``data/workspace/tables/<stem>/table_<n>.{csv,json}``.
 

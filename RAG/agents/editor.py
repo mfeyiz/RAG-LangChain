@@ -6,6 +6,10 @@ section, or replace a short existing snippet) — the LLM only ever emits the
 changed fragment, never the whole file, so large documents can't be truncated
 or destroyed. It then re-indexes the workspace channel and regenerates the
 workspace PDF. The read-only `originals` channel is never touched.
+
+Quoting syntax: text in "double quotes" within the @update instruction is
+treated as verbatim content that must appear byte-for-byte in the output.
+Unquoted text is the LLM instruction (what/where to change).
 """
 import asyncio
 import re
@@ -30,7 +34,8 @@ Hard rules:
 - If the instruction CORRECTS or CHANGES existing information, edit that information IN PLACE — modify the existing sentence/line/list item. Do NOT also keep the old version. No duplicated or contradictory statements.
 - If the instruction ADDS genuinely new information, place it at the most logical spot within the section (e.g. the next item of the relevant list), not blindly at the end.
 - Preserve everything in the section that the instruction does not touch, byte-for-byte where possible (keep existing headings, image links like ![](figure.png), tables, and formatting).
-- Use the same language as the section. Keep well-formed Markdown.
+- Any [VERBATIM_N] placeholder in the instruction refers to an exact string listed in the VERBATIM STRINGS block. Copy that string into your output character-for-character. Never rephrase, shorten, translate, or modify verbatim strings.
+- Keep well-formed Markdown.
 - Output ONLY the rewritten section Markdown."""
 
 
@@ -39,29 +44,54 @@ def strip_update_tag(query: str) -> str:
     return re.sub(r"@update\b", "", query, count=1, flags=re.IGNORECASE).strip()
 
 
+def _parse_verbatim_quotes(instruction: str) -> tuple[str, list[str]]:
+    """Extract "quoted" strings from the @update instruction.
+
+    Quoted strings are verbatim content that must appear unchanged in the
+    output Markdown. Unquoted text is the LLM instruction (where/how to edit).
+
+    Returns (processed_instruction, verbatim_list):
+    - processed_instruction: instruction with each quoted string replaced by
+      a [VERBATIM_N] marker so the LLM knows its position in the instruction.
+    - verbatim_list: the original quoted strings in order.
+    """
+    verbatim: list[str] = []
+
+    def replacer(m: re.Match) -> str:
+        verbatim.append(m.group(1))
+        return f"[VERBATIM_{len(verbatim)}]"
+
+    processed = re.sub(r'"([^"]+)"', replacer, instruction)
+    return processed, verbatim
+
+
+def _verbatim_block(verbatim_list: list[str]) -> str:
+    """Build the VERBATIM STRINGS appendix for the LLM HumanMessage."""
+    if not verbatim_list:
+        return ""
+    lines = "\n".join(f"  [VERBATIM_{i + 1}]: {v}" for i, v in enumerate(verbatim_list))
+    return f"\n\nVERBATIM STRINGS — copy these character-for-character into your output:\n{lines}"
+
+
 async def editor_node(state: AgentState) -> dict:
-    instruction = strip_update_tag(state["query"])
+    raw_instruction = strip_update_tag(state["query"])
+    instruction, verbatim_list = _parse_verbatim_quotes(raw_instruction)
 
     with traced_observation("editor", input_payload={"instruction": instruction}) as span:
-        if not instruction:
-            msg = "Lütfen @update etiketinden sonra ne eklemek/güncellemek istediğinizi yazın."
+        if not instruction.strip() and not verbatim_list:
+            msg = "Please write what you want to add/update after the @update tag."
             span.update(output={"error": "empty_instruction"})
             return _finish(msg)
 
-        # The instruction alone ("add a step 8 …") often doesn't name the topic,
-        # so locating the target purely from it picks the wrong file. Enrich the
-        # search with the recent conversation (e.g. the "cyber kill chain"
-        # question this update follows) so the edit lands in the right document.
+        # Enrich the search with recent conversation context so the edit lands
+        # in the right document even when the instruction alone ("add step 8")
+        # doesn't name the topic.
         history = state.get("conversation_history") or []
         recent_context = " ".join((turn.get("query") or "") for turn in history[-2:]).strip()
-        search_text = f"{recent_context} {instruction}".strip()
+        # Use the raw (un-marker-replaced) instruction for retrieval so quoted
+        # strings contribute to the semantic search.
+        search_text = f"{recent_context} {raw_instruction}".strip()
 
-        # Locate the target file AND the full SECTION (parent) retrieval returns
-        # for this topic. We hand the whole section to the LLM, let it rewrite the
-        # section in place, then swap that exact section back into the file. This
-        # keeps the edit in the right place (no end-of-file dumping), lets the LLM
-        # update existing facts instead of duplicating them, and never rewrites
-        # the whole document.
         source, section, heading_path = await asyncio.to_thread(_locate_target, search_text)
         md_path = paths.workspace_md_path(source)
         current = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
@@ -71,33 +101,75 @@ async def editor_node(state: AgentState) -> dict:
             if recent_context else ""
         )
 
-        # When the instruction asks to add a CHART/graph to the document, generate
-        # the PNG up front (code interpreter over the stored tables) and tell the
-        # editor LLM to embed it inline via ![](/images/workspace/<stem>/<file>).
-        chart_embed = await _maybe_generate_chart_for_edit(instruction, source, span)
+        chart_embed = await _maybe_generate_chart_for_edit(raw_instruction, source, span)
 
-        # Resolve the exact on-disk section slice to rewrite IN PLACE. Prefer an
-        # exact match of the indexed section text; otherwise relocate the section
-        # by its heading trail — the indexed `parent_content` is whitespace-
-        # normalised and often not byte-for-byte in the file, and relying on an
-        # exact match wrongly forced updates to append at the end of the file.
+        # ── 4-level section resolution ──────────────────────────────────────
+        # Level 1: exact match of indexed parent_content in file
         section_bounds: tuple[int, int] | None = None
         section_text = ""
+
         if section and section in current:
             idx = current.index(section)
             section_bounds = (idx, idx + len(section))
             section_text = section
-        elif heading_path:
+
+        # Level 2: locate section via stored heading_path
+        if not section_bounds and heading_path:
             found = _find_section_span(current, heading_path)
+            if not found:
+                # Try each component individually (leaf → root) in case the
+                # full ancestor chain doesn't match but the leaf heading does.
+                for component in reversed(heading_path.split(">")):
+                    component = component.strip()
+                    if component:
+                        found = _find_section_span(current, component)
+                        if found:
+                            break
             if found:
                 section_bounds = found
                 section_text = current[found[0]:found[1]]
 
-        # No existing section located (empty workspace / brand-new topic): fall
-        # back to the legacy small-patch path so the user's content is captured.
+        # Level 3: scan every heading line inside parent_content and try each
+        # one — do NOT break on the first heading regardless of whether it matched.
+        if not section_bounds and section:
+            for line in section.splitlines():
+                stripped = line.strip()
+                if re.match(r"^#{1,6}\s+", stripped):
+                    found = _find_section_span(current, _norm_heading(stripped))
+                    if found:
+                        section_bounds = found
+                        section_text = current[found[0]:found[1]]
+                        break   # only stop when we actually found a match
+
+        # Level 4: anchor-text search — find a distinctive line from
+        # parent_content in the file, then derive its containing section.
+        if not section_bounds and section:
+            found = _find_section_by_anchor(current, section)
+            if found:
+                section_bounds = found
+                section_text = current[found[0]:found[1]]
+
+        # Level 5: word-overlap — find the section whose vocabulary overlaps
+        # most with parent_content. Catches translated / reformatted documents
+        # where none of the text-based levels matched.
+        if not section_bounds and section:
+            found = _find_section_by_overlap(current, section)
+            if found:
+                section_bounds = found
+                section_text = current[found[0]:found[1]]
+
+        # ── Build LLM prompt ────────────────────────────────────────────────
+        verbatim_suffix = _verbatim_block(verbatim_list)
+        chart_suffix = (
+            f"\n\nA chart figure was generated for this update. Embed it in the "
+            f"rewritten section with this exact Markdown image link at the right "
+            f"place:\n{chart_embed['markdown']}"
+            if chart_embed else ""
+        )
+
         if section_bounds is None or not section_text.strip():
-            updated, change = await _legacy_patch(
-                instruction, context_note, source, current, span, chart_embed
+            updated, change = await _create_new_section(
+                instruction, verbatim_suffix, context_note, source, current, span, chart_embed
             )
         else:
             llm = get_llm()
@@ -106,10 +178,9 @@ async def editor_node(state: AgentState) -> dict:
                 HumanMessage(
                     content=(
                         f"UPDATE INSTRUCTION:\n{instruction}{context_note}"
-                        + (f"\n\nA chart figure was generated for this update. Embed it in the rewritten "
-                           f"section with this exact Markdown image link at the right place:\n{chart_embed['markdown']}"
-                           if chart_embed else "")
-                        + f"\n\nSECTION TO EDIT (from {source}) — return this whole section, rewritten:\n{section_text}"
+                        f"{chart_suffix}"
+                        f"{verbatim_suffix}"
+                        f"\n\nSECTION TO EDIT (from {source}) — return this whole section, rewritten:\n{section_text}"
                     )
                 ),
             ]
@@ -117,11 +188,9 @@ async def editor_node(state: AgentState) -> dict:
             new_section = _clean_markdown(response.content).strip()
             if not new_section:
                 span.update(output={"error": "empty_output"})
-                return _finish("Güncelleme üretilemedi, lütfen talimatı netleştirin.")
-            # Ensure the chart link is present even if the model dropped it.
+                return _finish("Could not generate update, please clarify the instruction.")
             if chart_embed and chart_embed["markdown"] not in new_section:
                 new_section += "\n\n" + chart_embed["markdown"]
-            # Deterministic in-place splice of the located section slice.
             start, end = section_bounds
             updated = current[:start] + new_section + current[end:]
             change = "section_rewrite"
@@ -129,17 +198,12 @@ async def editor_node(state: AgentState) -> dict:
         if updated is None or updated.strip() == current.strip():
             span.update(output={"error": "no_change"})
             return _finish(
-                "Belgede bir değişiklik yapılmadı. Lütfen talimatı daha açık yazın."
+                "No change was made to the document. Please write a clearer instruction."
             )
 
-        # ── Human-in-the-loop: do NOT persist yet. Stash the diff and ask the
-        # user to approve it. The frontend renders a red/green diff preview; on
-        # "Onayla" it POSTs the edit_token to /update/apply which persists,
-        # re-indexes, regenerates the PDF, and creates a Git commit. On "Reddet"
-        # it calls /update/reject to discard the stashed edit.
         token = stash_pending_edit({
             "source": source,
-            "instruction": instruction,
+            "instruction": raw_instruction,
             "before": current,
             "after": updated,
             "change_kind": change,
@@ -161,7 +225,7 @@ async def editor_node(state: AgentState) -> dict:
             "edit_token": token,
             "edit_preview": {
                 "source": source,
-                "instruction": instruction,
+                "instruction": raw_instruction,
                 "before": current,
                 "after": updated,
                 "change_kind": change,
@@ -169,9 +233,9 @@ async def editor_node(state: AgentState) -> dict:
                 "heading_path": heading_path,
             },
             "edit_target_file": source,
-            "edit_instruction": instruction,
-            "final_response": "",  # surfaced via the edit_preview SSE event, not a message
-            "messages": [AIMessage(content="Değişiklik örneği hazır — onayınız bekleniyor.")],
+            "edit_instruction": raw_instruction,
+            "final_response": "",
+            "messages": [AIMessage(content="Change preview ready — waiting for your approval.")],
         }
 
 
@@ -215,10 +279,6 @@ def _find_section_span(current: str, heading_path: str) -> tuple[int, int] | Non
     """Locate a heading section in ``current`` by its heading trail and return
     the ``(start, end)`` char offsets spanning from that heading line up to the
     next heading of the same-or-higher level (or EOF).
-
-    This is deterministic and immune to the whitespace normalisation that makes
-    the indexed ``parent_content`` differ from the on-disk file, so an update
-    lands in the right section instead of being appended at the end.
     """
     if not heading_path.strip():
         return None
@@ -228,7 +288,6 @@ def _find_section_span(current: str, heading_path: str) -> tuple[int, int] | Non
     if not target:
         return None
 
-    # All headings in the file: (start_offset, level, normalised text).
     headings: list[tuple[int, int, str]] = []
     for m in re.finditer(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$", current):
         headings.append((m.start(), len(m.group(1)), _norm_heading(m.group(2))))
@@ -236,7 +295,6 @@ def _find_section_span(current: str, heading_path: str) -> tuple[int, int] | Non
         return None
 
     def ancestor_chain(idx: int) -> list[str]:
-        """Heading texts from the document root down to headings[idx]."""
         _, level, _ = headings[idx]
         chain: list[str] = []
         cur_level = level
@@ -253,8 +311,6 @@ def _find_section_span(current: str, heading_path: str) -> tuple[int, int] | Non
     if not candidates:
         return None
 
-    # Prefer a candidate whose full ancestor chain matches the indexed path
-    # (disambiguates repeated heading names); else take the first text match.
     chosen = candidates[0]
     for i in candidates:
         if ancestor_chain(i) == components:
@@ -271,46 +327,172 @@ def _find_section_span(current: str, heading_path: str) -> tuple[int, int] | Non
     return start, end
 
 
-_LEGACY_SYSTEM_PROMPT = """You maintain a Markdown knowledge base. Turn the UPDATE INSTRUCTION into a small, self-contained Markdown block (a short heading plus content) suitable to add to a notes file. Output ONLY the Markdown — no commentary, no code fences."""
+def _find_section_by_anchor(current: str, section: str) -> tuple[int, int] | None:
+    """Level-4 fallback: find a distinctive non-heading line from ``section``
+    in ``current``, then return the heading-section boundaries that contain it.
+
+    This handles the case where ``parent_content`` has different whitespace
+    from the on-disk file and no heading path is available.
+    """
+    if not section or not current:
+        return None
+
+    # Collect headings with their positions and levels for boundary calculation.
+    headings: list[tuple[int, int]] = []  # (start_offset, level)
+    for m in re.finditer(r"(?m)^(#{1,6})[ \t]+", current):
+        headings.append((m.start(), len(m.group(1))))
+
+    # Find the first distinctive (non-heading) line from parent_content.
+    for line in section.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or len(stripped) < 20:
+            continue
+        # Try exact and whitespace-normalized match.
+        anchor = None
+        if stripped in current:
+            anchor = current.index(stripped)
+        else:
+            norm_stripped = re.sub(r"\s+", " ", stripped)
+            norm_current = re.sub(r"\s+", " ", current)
+            if norm_stripped in norm_current:
+                # Map normalized index back to original by walking the string.
+                norm_idx = norm_current.index(norm_stripped)
+                orig_idx = _norm_to_orig_offset(current, norm_idx)
+                anchor = orig_idx
+
+        if anchor is None:
+            continue
+
+        # Derive the section that contains this anchor.
+        section_start = 0
+        section_level = 1
+        for h_start, h_level in headings:
+            if h_start > anchor:
+                break
+            section_start = h_start
+            section_level = h_level
+
+        section_end = len(current)
+        for h_start, h_level in headings:
+            if h_start > section_start and h_level <= section_level:
+                section_end = h_start
+                break
+
+        return section_start, section_end
+
+    return None
 
 
-async def _legacy_patch(
-    instruction: str, context_note: str, source: str, current: str, span, chart_embed: dict | None = None
+def _find_section_by_overlap(current: str, section: str) -> tuple[int, int] | None:
+    """Level-5 fallback: find the heading-section in ``current`` whose vocabulary
+    overlaps most with ``section`` (the indexed parent_content).
+
+    Handles translated or heavily reformatted documents where neither exact
+    match, heading-path lookup, nor anchor-text search can locate the section.
+    Requires at least 30 % word overlap to avoid false positives.
+    """
+    if not section or not current:
+        return None
+
+    headings = list(re.finditer(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$", current))
+    if not headings:
+        return None
+
+    # Content words (≥4 chars) from the indexed chunk.
+    section_words = set(re.findall(r"\b\w{4,}\b", section.lower()))
+    if not section_words:
+        return None
+
+    best_score = 0.0
+    best_bounds: tuple[int, int] | None = None
+
+    for i, h in enumerate(headings):
+        start = h.start()
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(current)
+        sec_text = current[start:end]
+        sec_words = set(re.findall(r"\b\w{4,}\b", sec_text.lower()))
+        overlap = len(section_words & sec_words)
+        score = overlap / max(1, len(section_words))
+        if score > best_score:
+            best_score = score
+            best_bounds = (start, end)
+
+    if best_score >= 0.3 and best_bounds:
+        return best_bounds
+    return None
+
+
+def _norm_to_orig_offset(text: str, norm_idx: int) -> int:
+    """Map a character offset in whitespace-normalized text back to ``text``."""
+    count = 0
+    in_space = False
+    for orig_i, ch in enumerate(text):
+        if ch in " \t\n\r":
+            if not in_space:
+                if count == norm_idx:
+                    return orig_i
+                count += 1
+                in_space = True
+        else:
+            if count == norm_idx:
+                return orig_i
+            count += 1
+            in_space = False
+    return len(text)
+
+
+_NEW_SECTION_SYSTEM_PROMPT = """You maintain a Markdown knowledge base. Turn the UPDATE INSTRUCTION into a small, self-contained Markdown block (a short heading plus content) suitable to add to a notes file. Output ONLY the Markdown — no commentary, no code fences.
+
+Hard rule: Any [VERBATIM_N] placeholder in the instruction refers to an exact string listed in the VERBATIM STRINGS block. Copy it character-for-character into your output."""
+
+
+async def _create_new_section(
+    instruction: str,
+    verbatim_suffix: str,
+    context_note: str,
+    source: str,
+    current: str,
+    span,
+    chart_embed: dict | None = None,
 ) -> tuple[str | None, str]:
-    """Fallback when no existing section was located (empty workspace / new topic).
+    """Create a new Markdown section when no existing section was located.
 
-    Asks the model for a self-contained Markdown block and appends it, so the
-    user's content is captured even with nothing to rewrite in place.
+    Generates a self-contained Markdown block with a proper heading and inserts
+    it at the end of the document with a blank-line separator. Unlike the old
+    _legacy_patch, this never concatenates raw text without a heading.
     """
     llm = get_llm()
-    prompt = f"UPDATE INSTRUCTION:\n{instruction}{context_note}"
+    prompt = f"UPDATE INSTRUCTION:\n{instruction}{context_note}{verbatim_suffix}"
     if chart_embed:
         prompt += "\n\nInclude this generated chart image at the end, exactly:\n" + chart_embed["markdown"]
     response = await invoke_with_langfuse(
         llm,
         [
-            SystemMessage(content=_LEGACY_SYSTEM_PROMPT),
+            SystemMessage(content=_NEW_SECTION_SYSTEM_PROMPT),
             HumanMessage(content=prompt),
         ],
     )
     block = _clean_markdown(response.content).strip()
     if not block:
-        return None, "append"
+        return None, "new_section"
     if chart_embed and chart_embed["markdown"] not in block:
         block += "\n\n" + chart_embed["markdown"]
     if not current.strip():
-        return block, "append"
+        return block, "new_section"
     separator = "" if current.endswith("\n") else "\n"
-    return f"{current}{separator}\n{block}\n", "append"
+    return f"{current}{separator}\n{block}\n", "new_section"
 
 
-_CHART_HINTS = ("grafik", "grafiğ", "pasta", "bar chart", "chart", "plot", "histogram", "scatter", "çiz")
+_CHART_HINTS = (
+    "chart", "graph", "plot", "histogram", "scatter", "bar chart", "pie chart",
+    "line chart", "area chart", "draw",
+)
 
 
 async def _maybe_generate_chart_for_edit(instruction: str, source: str, span) -> dict | None:
     """If the @update instruction asks for a chart and stored tables exist,
-    generate a PNG into the workspace images dir and return a metadata dict the
-    editor uses to embed the figure inline. Returns None when no chart is needed.
+    generate a PNG and return metadata for inline embedding. Returns None when
+    no chart is needed.
     """
     instr = instruction.lower()
     if not any(h in instr for h in _CHART_HINTS):
@@ -319,9 +501,7 @@ async def _maybe_generate_chart_for_edit(instruction: str, source: str, span) ->
         from RAG.services.table_store import list_all_tables
 
         tables = list_all_tables()
-        # Prefer the edited document's tables.
         from RAG.services import paths as _paths
-        stem = _paths.stem_of(source)
         own_tables = [t for t in tables if t["source"] == source]
         relevant = own_tables or tables
         if not relevant:
@@ -334,15 +514,12 @@ async def _maybe_generate_chart_for_edit(instruction: str, source: str, span) ->
         chart_name = f"chart_{_slug(instruction)}.png"
         chart_path = chart_dir / chart_name
 
-        # Drive the code interpreter with the current @update instruction so it
-        # produces the requested chart type.
         pseudo_state = {"query": instruction, "trace_id": ""}
         snippet = await _generate_snippet(pseudo_state, relevant, str(chart_path))
-        _result_text, chart_saved = _run_snippet(
-            snippet, relevant, str(chart_path),
-        )
+        _result_text, chart_saved = _run_snippet(snippet, relevant, str(chart_path))
         if not chart_saved or not chart_path.exists():
             return None
+        stem = _paths.stem_of(source)
         url = f"/images/workspace/{stem}/{chart_name}"
         return {"name": chart_name, "path": str(chart_path), "markdown": f"![chart]({url})"}
     except Exception as exc:
@@ -363,7 +540,6 @@ def _render_pdf_safe(source: str) -> bool:
 
 def _clean_markdown(text: str) -> str:
     text = (text or "").strip()
-    # Strip an accidental surrounding ```markdown ... ``` fence.
     fence = re.match(r"^```(?:markdown|md)?\s*\n(.*)\n```$", text, flags=re.DOTALL)
     if fence:
         text = fence.group(1).strip()
@@ -393,38 +569,43 @@ def apply_pending_edit(edit: dict) -> dict:
 
     md_path = paths.workspace_md_path(source)
     paths.ensure_dirs()
-    
-    # Staleness guard
+
     current_content = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
     if current_content.strip() != before.strip():
-        raise ValueError("Belge başka bir düzenleme nedeniyle değişti. Lütfen değişikliği tekrar isteyin.")
+        raise ValueError(
+            "The document was modified by another edit since the preview was generated. "
+            "Please re-request the change."
+        )
 
     md_path.write_text(after, encoding="utf-8")
 
     reindex = reindex_workspace_source(source)
     pdf_ok = _render_pdf_safe(source)
-    
-    # Generate DOCX
+
     try:
         from RAG.services.docx_exporter import render as render_docx
         render_docx(source)
     except Exception as exc:
         print(f"[Editor] DOCX regeneration failed for {source} during apply: {exc}")
-        
+
     commit_sha = commit_change(source, instruction[:120])
 
     action_label = {
-        "section_rewrite": "ilgili bölüm yerinde güncellendi",
-        "append": "belgenin sonuna eklendi",
-    }.get(edit.get("change_kind", ""), "güncellendi")
-    summary = f"'{source}' — {action_label} ({reindex.get('chunks_added', 0)} parça yeniden indekslendi)."
+        "section_rewrite": "relevant section updated in place",
+        "new_section": "new section added to document",
+        "append": "appended to document",
+    }.get(edit.get("change_kind", ""), "updated")
+    summary = (
+        f"'{source}' — {action_label} "
+        f"({reindex.get('chunks_added', 0)} chunks re-indexed)."
+    )
     reply = summary
     if pdf_ok:
-        reply += " Güncel PDF indirilebilir."
+        reply += " Updated PDF is available for download."
     else:
-        reply += " (PDF yeniden üretilemedi.)"
+        reply += " (PDF could not be regenerated.)"
     if commit_sha:
-        reply += f" Sürüm kaydedildi ({commit_sha[:7]})."
+        reply += f" Version saved ({commit_sha[:7]})."
 
     return {
         "source": source,
@@ -437,16 +618,11 @@ def apply_pending_edit(edit: dict) -> dict:
 
 
 def _diff_preview_lines(before: str, after: str, context: int = 2) -> list[dict]:
-    """A compact line-level diff for the frontend diff viewer.
-
-    Returns a list of {type: same|added|removed, before, after}. Uses difflib to
-    keep it dependency-free; the frontend renders red/green rows from this.
-    """
+    """A compact line-level diff for the frontend diff viewer."""
     import difflib
 
     a = before.splitlines()
     b = after.splitlines()
-    # Use ndiff but project to added/removed/equal ops with limited context.
     sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
     rows: list[dict] = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
@@ -464,7 +640,6 @@ def _diff_preview_lines(before: str, after: str, context: int = 2) -> list[dict]
         elif tag == "insert":
             for k in range(j1, j2):
                 rows.append({"type": "added", "before": None, "after": b[k]})
-    # Trim long unchanged runs to keep the preview lightweight for the UI.
     return _trim_context(rows, context)
 
 
@@ -517,4 +692,3 @@ Hard rules:
     if content.endswith("```"):
         content = content[:-3].strip()
     return content
-

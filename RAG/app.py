@@ -116,11 +116,11 @@ async def status():
     """Lightweight status for the UI: are models loaded and is the index ready?"""
     models = models_ready()
     if not models:
-        phase, message = "loading_models", "Modeller yükleniyor…"
+        phase, message = "loading_models", "Loading models…"
     elif not _index_ready:
-        phase, message = "indexing", "Belgeler indeksleniyor, lütfen bekleyin…"
+        phase, message = "indexing", "Indexing documents, please wait…"
     else:
-        phase, message = "ready", "Hazır"
+        phase, message = "ready", "Ready"
     return {
         "models_ready": models,
         "index_ready": _index_ready,
@@ -148,13 +148,13 @@ async def login(body: LoginRequest):
     """Exchange username/password for a signed JWT used by @update and admin APIs."""
     if not auth_configured():
         return JSONResponse(
-            {"error": "Kimlik doğrulama yapılandırılmamış (JWT_SECRET set değil)."},
+            {"error": "Authentication not configured (JWT_SECRET not set)."},
             status_code=503,
         )
 
     role = await asyncio.to_thread(users.verify_credentials, body.username, body.password)
     if role is None:
-        return JSONResponse({"error": "Kullanıcı adı veya parola hatalı."}, status_code=401)
+        return JSONResponse({"error": "Invalid username or password."}, status_code=401)
 
     token = create_access_token(sub=body.username, role=role)
     return {"token": token, "role": role, "username": body.username}
@@ -165,12 +165,12 @@ async def register(body: RegisterRequest, request: Request):
     """Create a new user — admin only."""
     auth = authenticate_request(request)
     if not auth.is_admin:
-        return JSONResponse({"error": "Bu işlem için yönetici yetkisi gerekir."}, status_code=403)
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
 
     role = body.role if body.role in ("user", "admin") else "user"
     ok = await asyncio.to_thread(users.create_user, body.username, body.password, role)
     if not ok:
-        return JSONResponse({"error": "Kullanıcı oluşturulamadı."}, status_code=400)
+        return JSONResponse({"error": "Could not create user."}, status_code=400)
     return {"ok": True, "username": body.username, "role": role}
 
 
@@ -190,7 +190,7 @@ async def handle_query(request: Request):
     # RAG/agents/supervisor.py that routes @update to the editor.
     if re.search(r"@update\b", user_query, flags=re.IGNORECASE) and not auth.authenticated:
         return JSONResponse(
-            {"error": "@update için giriş yapmalısınız. Lütfen oturum açın."},
+            {"error": "Login required to use @update."},
             status_code=403,
         )
 
@@ -574,7 +574,7 @@ async def download_workspace_docx(source: str):
     except ValueError:
         return JSONResponse({"error": "Invalid path."}, status_code=400)
     if not docx_path.exists():
-        return JSONResponse({"error": "Word dosyası bulunamadı. Lütfen önce belgeyi kaydedin."}, status_code=404)
+        return JSONResponse({"error": "Word file not found. Please save the document first."}, status_code=404)
     return FileResponse(
         str(docx_path),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -651,7 +651,7 @@ async def save_document(source: str, body: SaveDocumentRequest, request: Request
     """Save manual markdown edits, perform re-indexing, regenerate PDF/DOCX, and commit."""
     auth = authenticate_request(request)
     if not auth.authenticated:
-        return JSONResponse({"error": "Değişiklikleri kaydetmek için giriş yapmalısınız."}, status_code=401)
+        return JSONResponse({"error": "Login required to save changes."}, status_code=401)
 
     md_path = paths.workspace_md_path(source)
     try:
@@ -683,7 +683,7 @@ async def save_document(source: str, body: SaveDocumentRequest, request: Request
 
         # Git Commit
         from RAG.services.version_control import commit_change
-        commit_sha = commit_change(source, "manuel düzenleme")
+        commit_sha = commit_change(source, "manual edit")
 
         return reindex.get("chunks_added", 0), pdf_ok, docx_ok, commit_sha
 
@@ -709,13 +709,13 @@ async def edit_document_chat(source: str, body: EditChatRequest, request: Reques
     """Directly edit a document using instructions without supervisor routing."""
     auth = authenticate_request(request)
     if not auth.authenticated:
-        return JSONResponse({"error": "Kimlik doğrulaması gerekli."}, status_code=401)
+        return JSONResponse({"error": "Authentication required."}, status_code=401)
 
     from RAG.agents.editor import direct_edit_markdown
     try:
         updated_md = await direct_edit_markdown(body.current_markdown, body.query)
     except Exception as exc:
-        return JSONResponse({"error": f"Yapay zeka ile düzenleme başarısız: {exc}"}, status_code=500)
+        return JSONResponse({"error": f"AI-assisted edit failed: {exc}"}, status_code=500)
 
     return {
         "ok": True,
@@ -761,7 +761,7 @@ async def cite_doc(body: CiteDocRequest):
         # Never surface a bare 500 — the viewer would just show an empty grey
         # panel. Return a structured error the frontend can display.
         print(f"[Citation] /cite/doc failed for {body.source}: {exc}")
-        return JSONResponse({"error": "Atıf görüntüsü oluşturulamadı."}, status_code=404)
+        return JSONResponse({"error": "Could not render citation image."}, status_code=404)
     if "error" in result:
         return JSONResponse(result, status_code=404)
     return result
@@ -791,18 +791,18 @@ async def update_apply(request: Request, body: UpdateApplyRequest):
     viewer. Requires authentication (same as @update itself)."""
     auth = authenticate_request(request)
     if not auth.authenticated:
-        return JSONResponse({"error": "@update onayı için giriş yapmalısınız."}, status_code=403)
+        return JSONResponse({"error": "Login required to apply @update."}, status_code=403)
 
     edit = pop_pending_edit(body.token)
     if not edit:
-        return JSONResponse({"error": "Bekleyen değişiklik bulunamadı veya süresi doldu."}, status_code=404)
+        return JSONResponse({"error": "Pending change not found or expired."}, status_code=404)
 
     from RAG.agents.editor import apply_pending_edit
 
     try:
         result = await asyncio.to_thread(apply_pending_edit, edit)
     except Exception as exc:
-        return JSONResponse({"error": f"Değişiklik uygulanamadı: {exc}"}, status_code=500)
+        return JSONResponse({"error": f"Could not apply change: {exc}"}, status_code=500)
 
     pdf_url = f"/workspace/pdf/{result['source']}" if result.get("pdf_ok") else ""
     return {
@@ -842,12 +842,12 @@ async def admin_restore(request: Request, body: dict):
     source = (body or {}).get("source", "")
     ref = (body or {}).get("ref", "")
     if not source or not ref:
-        return JSONResponse({"error": "source ve ref gerekli."}, status_code=400)
+        return JSONResponse({"error": "source and ref are required."}, status_code=400)
 
     try:
         result = await asyncio.to_thread(version_control.restore, source, ref)
     except Exception as exc:
-        return JSONResponse({"error": f"Geri yükleme başarısız: {exc}"}, status_code=500)
+        return JSONResponse({"error": f"Restore failed: {exc}"}, status_code=500)
 
     # Re-index the restored workspace markdown + regenerate its PDF.
     from RAG.services.document_manager import reindex_workspace_source
@@ -893,7 +893,7 @@ async def admin_stats(request: Request):
 async def admin_list_documents(request: Request, channel: str = Query(default="workspace")):
     auth = authenticate_request(request)
     if not auth.authenticated:
-        return JSONResponse({"error": "Kimlik doğrulaması gerekli."}, status_code=401)
+        return JSONResponse({"error": "Authentication required."}, status_code=401)
     if channel not in ("originals", "workspace"):
         return JSONResponse({"error": "channel must be 'originals' or 'workspace'."}, status_code=400)
     return {"channel": channel, "documents": list_documents(channel)}

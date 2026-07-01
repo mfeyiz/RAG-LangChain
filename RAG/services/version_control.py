@@ -2,8 +2,8 @@
 
 The editable workspace markdown (and extracted figures + tables) lives under
 ``data/workspace``. We keep a local Git repository there so every ``@update``
-produces a commit the user can later inspect, diff, or roll back ("Son yaptığım
-değişikliği geri al", "Dün saat 15:00'teki sürüme dön").
+produces a commit the user can later inspect, diff, or roll back ("undo my last
+change", "go back to the 3 PM version from yesterday").
 
 GitPython is imported lazily; when git is unavailable the module degrades to a
 no-op so the rest of the app keeps working.

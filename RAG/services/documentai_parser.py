@@ -239,4 +239,4 @@ def _inject_figure_links(markdown: str, image_names: list[str]) -> str:
     if not image_names:
         return markdown
     links = "\n".join(f"![]({name})" for name in image_names)
-    return f"{markdown}\n\n## Figürler\n\n{links}\n"
+    return f"{markdown}\n\n## Figures\n\n{links}\n"

@@ -203,12 +203,12 @@ h1, h2 {
     align-items: start;
 }
 
-/* The two top-level views (.workspace / .library-view) set display:grid, which
-   would otherwise win over the `hidden` attribute's UA display:none (equal
-   specificity, later rule wins) — leaving both stacked and the Sohbet/Kitaplık
-   switch visually inert. Force hidden to win so they behave as real tabs. */
+/* All top-level views set display:grid, which would otherwise win over the
+   `hidden` attribute's UA display:none — leaving them stacked instead of
+   switching. Force hidden to win so tabs behave correctly. */
 .workspace[hidden],
-.library-view[hidden] { display: none !important; }
+.library-view[hidden],
+.editor-view[hidden] { display: none !important; }
 
 /* ── Chat panel ──────────────────────────────────────────────── */
 .chat-panel {
@@ -1552,7 +1552,7 @@ body.cite-open .workspace {
     body.cite-open .workspace { margin-right: 0; grid-template-columns: 1fr; }
 }
 
-/* ── Top tabs (Sohbet / Kitaplık) ────────────────────────────── */
+/* ── Top tabs (Chat / Library) ───────────────────────────────── */
 .top-tabs { display: flex; gap: 4px; background: var(--accent-soft); padding: 4px; border-radius: 999px; }
 .top-tab {
     display: inline-flex;
@@ -1572,7 +1572,7 @@ body.cite-open .workspace {
 .top-tab:hover { color: var(--accent-hover); }
 .top-tab.is-active { background: #fff; color: var(--accent-hover); box-shadow: var(--shadow-sm); }
 
-/* ── Library view (Kitaplık tab) ─────────────────────────────── */
+/* ── Library view (Library tab) ─────────────────────────────── */
 .library-view {
     width: min(1280px, 100%);
     margin: 0 auto;
@@ -1704,7 +1704,7 @@ body.cite-open .workspace {
     .compare-grid { grid-template-columns: 1fr; }
 }
 
-/* ── Editor view (Dosya düzenleme tab) ─────────────────────────────── */
+/* ── Editor view (File Editor tab) ─────────────────────────────── */
 .editor-view {
     width: min(1280px, 100%);
     margin: 0 auto;
