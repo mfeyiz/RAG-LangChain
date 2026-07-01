@@ -112,7 +112,7 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
                 "messages": [AIMessage(content="Awaiting web search approval.")],
             }
 
-        print(f"[Researcher] Web search approved — querying the web.")
+        print("[Researcher] Web search approved — querying the web.")
         web = await asyncio.to_thread(web_search, original_query)
         if web["context"]:
             await trace_event(

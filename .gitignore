@@ -49,9 +49,16 @@ env/
 
 # İşletim sistemi geçici dosyaları
 .DS_Store
-Thumbs.dbRAG/traces/
+Thumbs.db
+
+# --- RAG çalışma-zamanı çıktıları (git'e girmemeli) ---
+RAG/traces/
 RAG/vector_db/qdrant/
 
 # Runtime data artifacts (uploaded docs, extracted figures, derived corpus).
 RAG/data/
 RAG/vector_db/corpus_*.jsonl
+
+# Local model / HF caches
+.cache/
+.pytest_cache/

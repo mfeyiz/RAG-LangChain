@@ -82,6 +82,13 @@ spec:
                 name: rag-langchain
                 port:
                   number: 80
+          - path: /images
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-langchain
+                port:
+                  number: 80
           - path: /
             pathType: Prefix
             backend:

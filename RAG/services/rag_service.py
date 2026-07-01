@@ -1,3 +1,6 @@
+# flake8: noqa: E402
+# The RAG.* imports follow the sys.path bootstrap below so this module runs both
+# as a package import and as a standalone script; E402 is silenced file-wide.
 import hashlib
 import json
 import os

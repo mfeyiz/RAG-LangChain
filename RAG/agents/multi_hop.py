@@ -36,7 +36,7 @@ async def decompose_question(query: str) -> dict:
                 HumanMessage(content=query),
             ],
         )
-        
+
         import json
         import re
         content = response.content.strip()
@@ -61,7 +61,7 @@ async def extract_answer_for_next_step(query: str, context: str) -> str:
     try:
         llm = get_llm()
         prompt = ANSWER_EXTRACTION_PROMPT.format(query=query, context=context[:2000])
-        
+
         response = await invoke_with_langfuse(
             llm,
             [
@@ -69,7 +69,7 @@ async def extract_answer_for_next_step(query: str, context: str) -> str:
                 HumanMessage(content=prompt),
             ],
         )
-        
+
         return response.content.strip()
     except Exception as exc:
         print(f"[MultiHop] Answer extraction failed: {exc}")
@@ -81,10 +81,10 @@ async def build_chained_query(original_query: str, previous_answer: str, next_st
     try:
         llm = get_llm()
         prompt = f"""The previous step found: "{previous_answer}"
-        
+
 Now answer this related question: "{next_step['query']}"
 Use the information from the previous step in your search query."""
-        
+
         response = await invoke_with_langfuse(
             llm,
             [
@@ -92,7 +92,7 @@ Use the information from the previous step in your search query."""
                 HumanMessage(content=prompt),
             ],
         )
-        
+
         return response.content.strip()
     except Exception as exc:
         print(f"[MultiHop] Query chaining failed: {exc}")

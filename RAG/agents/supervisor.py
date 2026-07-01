@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 from RAG.agents.state import AgentState
-from RAG.services.tracing import invoke_with_langfuse, trace_event, traced_observation
+from RAG.services.tracing import trace_event, traced_observation
 
 
 env_path = Path(__file__).parent.parent.parent / '.env'

@@ -1,3 +1,6 @@
+# flake8: noqa: E402
+# Imports below the sys.path bootstrap intentionally follow the path insert so
+# `RAG.*` resolves when this module is run directly; E402 is silenced file-wide.
 import asyncio
 import json
 import mimetypes

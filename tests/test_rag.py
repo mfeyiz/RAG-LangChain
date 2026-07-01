@@ -332,4 +332,3 @@ def test_pdf_renderer_generates_pdf(tmp_path, monkeypatch):
     out = pdf_renderer.render(source)
     assert out.exists()
     assert out.read_bytes()[:4] == b"%PDF"
- 
