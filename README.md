@@ -54,6 +54,18 @@ flowchart TD
 uv sync --dev
 ```
 
+### One-command local run
+
+```bash
+./start.sh          # start Redis Stack + the app (frontend and API on one origin)
+./start.sh status    # health check
+./start.sh logs      # tail the app log
+./start.sh stop      # stop the app (leaves the shared Redis container running)
+```
+
+Idempotent and safe to re-run — it reuses whatever's already up. Override the
+port with `PORT=8091 ./start.sh`.
+
 Create `.env`:
 
 ```bash
