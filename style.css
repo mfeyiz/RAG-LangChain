@@ -465,7 +465,8 @@ h1, h2 {
     box-shadow: 0 0 0 4px rgba(201, 100, 66, 0.1);
 }
 
-#userInput {
+#userInput,
+#editorUserInput {
     flex: 1;
     min-height: 28px;
     max-height: 168px;
@@ -476,13 +477,16 @@ h1, h2 {
     background: transparent;
     font-size: 15px;
     line-height: 1.55;
+    width: 100%;
 }
 
-#userInput::placeholder {
+#userInput::placeholder,
+#editorUserInput::placeholder {
     color: var(--faint);
 }
 
-#sendButton {
+#sendButton,
+#editorSendButton {
     flex: 0 0 auto;
     width: 38px;
     height: 38px;
@@ -1858,26 +1862,31 @@ body.cite-open .workspace {
 }
 
 .toolbar-btn {
-    padding: 0;
-    width: 32px;
-    height: 32px;
-    display: flex;
+    padding: 0 6px !important;
+    width: auto !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    display: inline-flex !important;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-sm);
-    color: var(--muted);
+    border-radius: var(--radius-sm) !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--muted) !important;
     transition: background 0.15s, color 0.15s;
+    gap: 2px !important;
 }
 
 .toolbar-btn:hover {
-    background: var(--accent-soft);
-    color: var(--accent-hover);
+    background: var(--border) !important;
+    color: var(--accent) !important;
 }
 
 .toolbar-btn.is-active {
-    background: var(--accent-soft);
-    color: var(--accent-hover);
-    border-color: var(--accent-line);
+    background: var(--accent-soft) !important;
+    color: var(--accent-hover) !important;
+    border: none !important;
 }
 
 .toolbar-btn .material-symbols-outlined {
@@ -2327,6 +2336,7 @@ body.cite-open .workspace {
 .cb-field { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .cb-field > span { flex: 0 0 68px; }
 .cb-field-col { flex-direction: column; align-items: stretch; gap: 4px; }
+.cb-field-col > span { flex: none; }
 .cb-field select, .cb-field input, .cb-field textarea {
     flex: 1;
     width: 100%;
