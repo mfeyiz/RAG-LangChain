@@ -38,6 +38,10 @@ const libraryDownloads  = document.getElementById("libraryDownloads");
 const editorView        = document.getElementById("editorView");
 const editorFileList    = document.getElementById("editorFileList");
 const editorCountTag    = document.getElementById("editorCountTag");
+const editorOutlinePanel = document.getElementById("editorOutlinePanel");
+const editorOutlineToggleBtn = document.getElementById("editorOutlineToggleBtn");
+const insertTOCBtn      = document.getElementById("insertTOCBtn");
+const outlineList       = document.getElementById("outlineList");
 const editorPage        = document.getElementById("editorPage");
 const editorToolbar     = document.getElementById("editorToolbar");
 const editorSaveStatus  = document.getElementById("editorSaveStatus");
@@ -45,6 +49,36 @@ const editorChatForm    = document.getElementById("editorChatForm");
 const editorUserInput   = document.getElementById("editorUserInput");
 const editorSendButton  = document.getElementById("editorSendButton");
 const editorDownloadDocx = document.getElementById("editorDownloadDocx");
+const editorDownloadPdf = document.getElementById("editorDownloadPdf");
+const editorDownloadMd  = document.getElementById("editorDownloadMd");
+const editorDownloadHtml = document.getElementById("editorDownloadHtml");
+const editorHistoryBtn  = document.getElementById("editorHistoryBtn");
+const historyModal      = document.getElementById("historyModal");
+const historyClose      = document.getElementById("historyClose");
+const historyList       = document.getElementById("historyList");
+const historySub        = document.getElementById("historySub");
+const reportChatMessages = document.getElementById("reportChatMessages");
+const reportTools       = document.getElementById("reportTools");
+const reportToolsToggleBtn = document.getElementById("reportToolsToggleBtn");
+const newReportBtn      = document.getElementById("newReportBtn");
+const newReportModal    = document.getElementById("newReportModal");
+const newReportClose    = document.getElementById("newReportClose");
+const newReportTitle    = document.getElementById("newReportTitle");
+const newReportCreate   = document.getElementById("newReportCreate");
+const newReportStatus   = document.getElementById("newReportStatus");
+const templateGrid      = document.getElementById("templateGrid");
+const newReportUseAI    = document.getElementById("newReportUseAI");
+const aiGenPromptWrap   = document.getElementById("aiGenPromptWrap");
+const newReportAIPrompt = document.getElementById("newReportAIPrompt");
+const aiGenStatusWrap   = document.getElementById("aiGenStatusWrap");
+const aiGenStatusText   = document.getElementById("aiGenStatusText");
+const aiGenProgressFill = document.getElementById("aiGenProgressFill");
+const aiGenLogs         = document.getElementById("aiGenLogs");
+const newReportActions  = document.getElementById("newReportActions");
+const blockGrid         = document.getElementById("blockGrid");
+const evidenceList      = document.getElementById("evidenceList");
+const evidenceCount     = document.getElementById("evidenceCount");
+const libraryAssets     = document.getElementById("libraryAssets");
 const attachButton      = document.getElementById("attachButton");
 const imageInput        = document.getElementById("imageInput");
 const attachPreview     = document.getElementById("attachPreview");
@@ -1007,6 +1041,7 @@ function switchTab(tab) {
         loadLibrary();
     } else if (tab === "editor") {
         loadEditorFileList();
+        loadLibraryAssets();
     }
 }
 
@@ -1017,23 +1052,117 @@ async function fetchWorkspaceDocs() {
     return data.documents || [];
 }
 
-function renderDocRows(container, docs, activeSource, onSelect) {
+function renderDocRows(container, docs, activeSource, onSelect, opts = {}) {
     container.innerHTML = "";
+    appendDocRows(container, docs, activeSource, onSelect, opts);
+}
+
+function appendDocRows(container, docs, activeSource, onSelect, opts = {}) {
     docs.forEach((doc) => {
-        const row = document.createElement("button");
-        row.type = "button";
+        const name = doc.title || doc.source;
+        const icon = doc.kind === "report" ? (doc.generated ? "auto_awesome" : "description") : "upload_file";
+        const row = document.createElement("div");
         row.className = "library-row";
         row.dataset.source = doc.source;
         if (activeSource === doc.source) row.classList.add("is-active");
         row.innerHTML = `
-            <span class="material-symbols-outlined">description</span>
+            <span class="material-symbols-outlined">${icon}</span>
             <span class="library-row-text">
-                <span class="library-row-name">${escapeHtml(doc.source)}</span>
-                <span class="library-row-meta">${doc.chunks} chunk</span>
+                <span class="library-row-name">${escapeHtml(name)}</span>
+                <span class="library-row-meta">${doc.chunks} chunk${doc.chunks === 1 ? "" : "s"}</span>
             </span>`;
-        row.addEventListener("click", () => onSelect(doc.source));
+        row.addEventListener("click", (e) => {
+            if (e.target.closest(".row-menu-btn") || e.target.closest(".row-menu")) return;
+            onSelect(doc.source);
+        });
+        if (opts.withMenu) attachRowMenu(row, doc);
         container.appendChild(row);
     });
+}
+
+function docSectionHeader(label, count) {
+    const h = document.createElement("div");
+    h.className = "doc-group-head";
+    h.innerHTML = `${escapeHtml(label)} <span class="doc-group-count">${count}</span>`;
+    return h;
+}
+
+// A per-row "⋯" menu: Rename / Duplicate (reports only) + Delete (all).
+function attachRowMenu(row, doc) {
+    const isReport = doc.kind === "report";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "row-menu-btn";
+    btn.title = "Actions";
+    btn.innerHTML = `<span class="material-symbols-outlined">more_vert</span>`;
+    row.appendChild(btn);
+
+    btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeAllRowMenus();
+        const menu = document.createElement("div");
+        menu.className = "row-menu";
+        const items = [];
+        if (isReport) {
+            items.push(`<button type="button" data-act="rename"><span class="material-symbols-outlined">edit</span> Rename</button>`);
+            items.push(`<button type="button" data-act="duplicate"><span class="material-symbols-outlined">content_copy</span> Duplicate</button>`);
+        }
+        items.push(`<button type="button" data-act="delete" class="danger"><span class="material-symbols-outlined">delete</span> Delete</button>`);
+        menu.innerHTML = items.join("");
+        row.appendChild(menu);
+        menu.addEventListener("click", (ev) => {
+            const act = ev.target.closest("button")?.dataset.act;
+            if (act) { ev.stopPropagation(); closeAllRowMenus(); handleRowAction(act, doc); }
+        });
+        document.addEventListener("click", closeAllRowMenus, { once: true });
+    });
+}
+
+function closeAllRowMenus() {
+    document.querySelectorAll(".row-menu").forEach((m) => m.remove());
+}
+
+async function handleRowAction(act, doc) {
+    const src = doc.source;
+    try {
+        if (act === "rename") {
+            const title = window.prompt("New report title:", doc.title || doc.source.replace(/\.md$/, ""));
+            if (!title || !title.trim()) return;
+            const res = await fetch(`/documents/${encodeURIComponent(src)}/rename`, {
+                method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ title: title.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Rename failed.");
+            await loadEditorFileList();
+            if (editorDoc && editorDoc.source === src) await selectEditorDoc(data.source);
+        } else if (act === "duplicate") {
+            const res = await fetch(`/documents/${encodeURIComponent(src)}/duplicate`, {
+                method: "POST", headers: authHeaders({ "Content-Type": "application/json" })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Duplicate failed.");
+            await loadEditorFileList();
+            await selectEditorDoc(data.source);
+        } else if (act === "delete") {
+            if (!window.confirm(`Delete "${doc.title || doc.source}"? This cannot be undone.`)) return;
+            const res = await fetch(`/admin/documents/${encodeURIComponent(src)}`, {
+                method: "DELETE", headers: authHeaders()
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Delete failed.");
+            if (editorDoc && editorDoc.source === src) {
+                editorDoc = null;
+                editorPage.hidden = true;
+                editorDownloadDocx.disabled = true;
+                if (editorDownloadPdf) editorDownloadPdf.disabled = true;
+            }
+            await loadEditorFileList();
+            loadLibrary();
+        }
+    } catch (err) {
+        alert(err.message);
+    }
 }
 
 async function loadLibrary() {
@@ -1063,11 +1192,22 @@ async function loadEditorFileList() {
             editorFileList.innerHTML = `
                 <div class="empty-state">
                     <span class="material-symbols-outlined">folder_open</span>
-                    <p>No documents yet. Upload a PDF/DOCX to get started.</p>
+                    <p>No reports yet. Create one with "New" or upload a PDF/DOCX.</p>
                 </div>`;
             return;
         }
-        renderDocRows(editorFileList, docs, editorDoc ? editorDoc.source : null, selectEditorDoc);
+        const active = editorDoc ? editorDoc.source : null;
+        const reports = docs.filter((d) => d.kind === "report");
+        const uploads = docs.filter((d) => d.kind !== "report");
+        editorFileList.innerHTML = "";
+        if (reports.length) {
+            editorFileList.appendChild(docSectionHeader("Reports", reports.length));
+            appendDocRows(editorFileList, reports, active, selectEditorDoc, { withMenu: true });
+        }
+        if (uploads.length) {
+            editorFileList.appendChild(docSectionHeader("Uploaded documents", uploads.length));
+            appendDocRows(editorFileList, uploads, active, selectEditorDoc, { withMenu: true });
+        }
     } catch {
         editorCountTag.textContent = "!";
         editorFileList.innerHTML = `<div class="empty-state"><p>Could not load documents.</p></div>`;
@@ -1166,12 +1306,23 @@ function renderMarkdown(md) {
         .replace(/&lt;u&gt;([\s\S]*?)&lt;\/u&gt;/g, "<u>$1</u>")
         .replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, "<mark>$1</mark>")
         .replace(/&lt;mark\s+style=&quot;background:\s*([^&;]+);?&quot;&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark style="background: $1;">$2</mark>')
-        .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+        .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+        .replace(/\[([^\]]+)\]\(cite:\/\/([^?)]+)\?snippet=([^)]+)\)/g, (match, text, filename, snippet) => {
+            const decodedSnippet = decodeURIComponent(snippet.replace(/\+/g, " "));
+            return `<a href="#" class="citation-link" data-filename="${escapeHtml(filename)}" data-snippet="${escapeHtml(decodedSnippet)}">${escapeHtml(text)}</a>`;
+        });
 
     for (const raw of lines) {
         const line = raw.replace(/\s+$/, "");
         if (line.trim().startsWith("```")) { inCode = !inCode; html += inCode ? "<pre><code>" : "</code></pre>"; continue; }
         if (inCode) { html += escapeHtml(raw) + "\n"; continue; }
+
+        // Raw HTML block round-trip
+        if (line.trim().startsWith("<div") || line.trim().startsWith("<img")) {
+            closeList();
+            html += line + "\n";
+            continue;
+        }
 
         const h = /^(#{1,6})\s+(.*)$/.exec(line);
         if (h) { closeList(); const n = h[1].length; html += `<h${n}>${inline(h[2])}</h${n}>`; continue; }
@@ -1905,6 +2056,12 @@ function autoResizeEditorInput() {
     editorUserInput.style.height = `${editorUserInput.scrollHeight}px`;
 }
 editorUserInput.addEventListener("input", autoResizeEditorInput);
+editorUserInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendReportChat();
+    }
+});
 
 // Zoom controls
 function updateZoom() {
@@ -1992,6 +2149,12 @@ function htmlToMarkdown(container) {
             if (/^h[1-6]$/.test(tagName)) {
                 const level = parseInt(tagName[1]);
                 md += "#".repeat(level) + " " + inlineHtmlToMarkdown(child) + "\n\n";
+            } else if (tagName === "div" && child.classList.contains("kpi-card")) {
+                md += child.outerHTML + "\n\n";
+            } else if (tagName === "div" && child.classList.contains("page-break")) {
+                md += child.outerHTML + "\n\n";
+            } else if (tagName === "div" && child.classList.contains("report-chart-container")) {
+                md += child.outerHTML + "\n\n";
             } else if (tagName === "p" || tagName === "div") {
                 const text = inlineHtmlToMarkdown(child);
                 if (text) md += text + "\n\n";
@@ -2070,11 +2233,21 @@ function inlineHtmlToMarkdown(node) {
             } else if (tagName === "img") {
                 const alt = child.getAttribute("alt") || "";
                 let src = child.getAttribute("src") || "";
-                if (src.includes("/")) {
+                if (!src.startsWith("/images/") && src.includes("/")) {
                     const parts = src.split("/");
                     src = parts[parts.length - 1];
                 }
-                text += `![${alt}](${src})`;
+                const style = child.getAttribute("style");
+                const width = child.getAttribute("width");
+                const height = child.getAttribute("height");
+                if (style || width || height) {
+                    let styleStr = style || "";
+                    if (width && !styleStr.includes("width")) styleStr += ` width: ${width}px;`;
+                    if (height && !styleStr.includes("height")) styleStr += ` height: ${height}px;`;
+                    text += `<img src="${src}" alt="${alt}" style="${styleStr.trim()}">`;
+                } else {
+                    text += `![${alt}](${src})`;
+                }
             } else {
                 text += inner;
             }
@@ -2083,20 +2256,54 @@ function inlineHtmlToMarkdown(node) {
     return text;
 }
 
-// Auto-save debounced handler
-let autoSaveTimer = null;
+// Two-tier autosave: a fast per-keystroke draft write (markdown only) keeps
+// editing responsive; a heavier "finalize" (reindex + PDF/DOCX + git commit)
+// runs on idle / blur / before export so we don't reindex-and-commit on every
+// keystroke burst.
+let autoSaveTimer = null;      // fast draft-save debounce
+let finalizeTimer = null;      // heavy finalize debounce
+let hasUnfinalizedChanges = false;
+const FINALIZE_IDLE_MS = 15000;
 
 function triggerAutoSave() {
     if (!editorDoc) return;
+    hasUnfinalizedChanges = true;
     setEditorSaveStatus("dirty");
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(async () => {
-        await runAutoSave();
-    }, 1200);
+    autoSaveTimer = setTimeout(saveDraft, 1200);
+    if (finalizeTimer) clearTimeout(finalizeTimer);
+    finalizeTimer = setTimeout(finalizeSave, FINALIZE_IDLE_MS);
 }
 
-async function runAutoSave() {
+async function saveDraft() {
     if (!editorDoc) return;
+    setEditorSaveStatus("saving");
+    const source = editorDoc.source;
+    const currentMd = htmlToMarkdown(editorPage);
+    try {
+        const res = await fetch(`/documents/${encodeURIComponent(source)}/save-draft`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ markdown: currentMd })
+        });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || "Could not save.");
+        }
+        editorDoc.markdown = currentMd;
+        setEditorSaveStatus("draft");
+    } catch (err) {
+        console.error("Draft save failed:", err);
+        setEditorSaveStatus("error", err.message);
+    }
+}
+
+// Heavy save: persist + reindex + regenerate PDF/DOCX + git commit.
+async function finalizeSave() {
+    if (!editorDoc) return;
+    if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+    if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; }
+    if (!hasUnfinalizedChanges) return;
     setEditorSaveStatus("saving");
     const source = editorDoc.source;
     const currentMd = htmlToMarkdown(editorPage);
@@ -2107,29 +2314,35 @@ async function runAutoSave() {
             body: JSON.stringify({ markdown: currentMd })
         });
         if (!res.ok) {
-            const errData = await res.json();
+            const errData = await res.json().catch(() => ({}));
             throw new Error(errData.error || "Could not save.");
         }
-        const data = await res.json();
         editorDoc.markdown = currentMd;
+        hasUnfinalizedChanges = false;
         setEditorSaveStatus("saved");
     } catch (err) {
-        console.error("Auto-save failed:", err);
+        console.error("Finalize save failed:", err);
         setEditorSaveStatus("error", err.message);
     }
 }
+
+// Back-compat alias: existing callers (download, @update approve) want the heavy save.
+async function runAutoSave() { await finalizeSave(); }
 
 function setEditorSaveStatus(state, errMsg = "") {
     editorSaveStatus.className = `editor-save-pill ${state}`;
     const textEl = editorSaveStatus.querySelector(".status-text");
     editorSaveStatus.hidden = false;
     if (state === "saved") {
-        textEl.textContent = "Saved";
+        textEl.textContent = "Saved & indexed";
         setTimeout(() => {
-            if (editorSaveStatus.classList.contains("saved")) {
-                editorSaveStatus.hidden = true;
-            }
+            if (editorSaveStatus.classList.contains("saved")) editorSaveStatus.hidden = true;
         }, 3000);
+    } else if (state === "draft") {
+        textEl.textContent = "Draft saved";
+        setTimeout(() => {
+            if (editorSaveStatus.classList.contains("draft")) editorSaveStatus.hidden = true;
+        }, 2000);
     } else if (state === "saving") {
         textEl.textContent = "Saving…";
     } else if (state === "dirty") {
@@ -2142,6 +2355,10 @@ function setEditorSaveStatus(state, errMsg = "") {
 // Attach listeners for contenteditable changes
 editorPage.addEventListener("input", () => {
     triggerAutoSave();
+});
+// Finalize (reindex/export/commit) when the user leaves the editor.
+editorPage.addEventListener("blur", () => {
+    if (hasUnfinalizedChanges) finalizeSave();
 });
 
 // Inline diff helpers
@@ -2393,8 +2610,9 @@ function showWholeDocumentDiff(beforeMd, afterMd) {
         editorPage.innerHTML = renderMarkdown(afterMd);
         editorPage.contentEditable = "true";
         actions.hidden = true;
-        
-        await runAutoSave();
+
+        hasUnfinalizedChanges = true;  // programmatic change → force a finalize
+        await finalizeSave();
         loadLibrary();
         loadEditorFileList();
     };
@@ -2407,48 +2625,37 @@ function showWholeDocumentDiff(beforeMd, afterMd) {
 }
 
 // Send editor message handler (direct edit-chat call)
-async function sendEditorMessage() {
+/* ── Report studio chat (left rail): ask for evidence OR @update the report ── */
+function addReportChatMsg(text, type) {
+    const hint = reportChatMessages.querySelector(".report-chat-hint");
+    if (hint) hint.remove();
+    const el = document.createElement("div");
+    el.className = `rc-msg ${type}`;
+    if (type === "bot") el.innerHTML = renderMarkdown(text || "");
+    else el.textContent = text;
+    reportChatMessages.appendChild(el);
+    reportChatMessages.scrollTop = reportChatMessages.scrollHeight;
+    return el;
+}
+
+async function sendReportChat() {
     const message = editorUserInput.value.trim();
     if (!message || editorSendButton.disabled) return;
-    if (!editorDoc) return;
-    
+
+    const isEdit = /^@update\b/i.test(message) || /^@edit\b/i.test(message);
+
     editorUserInput.value = "";
     autoResizeEditorInput();
-    
-    const currentMd = htmlToMarkdown(editorPage);
-    
+    addReportChatMsg(message, "user");
     editorUserInput.disabled = true;
     editorSendButton.disabled = true;
-    
-    const originalContent = editorPage.innerHTML;
-    editorPage.innerHTML = `
-        <div class="editor-loading-overlay" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; gap: 16px; color: var(--muted);">
-            <span class="material-symbols-outlined spin" style="font-size: 48px; animation: spin 2s linear infinite;">sync</span>
-            <p style="font-size: 14px; font-weight: 500;">AI is computing changes, please wait…</p>
-        </div>
-    `;
-    
+
     try {
-        const res = await fetch(`/documents/${encodeURIComponent(editorDoc.source)}/edit-chat`, {
-            method: "POST",
-            headers: authHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({
-                query: message,
-                current_markdown: currentMd
-            })
-        });
-        
-        if (!res.ok) {
-            const data = await res.json();
-            throw new Error(data.error || "Edit request failed.");
+        if (isEdit) {
+            await runReportEdit(message);
+        } else {
+            await runReportAsk(message);
         }
-        
-        const data = await res.json();
-        showWholeDocumentDiff(data.before, data.after);
-        
-    } catch (err) {
-        alert(err.message);
-        editorPage.innerHTML = originalContent;
     } finally {
         editorUserInput.disabled = false;
         editorSendButton.disabled = false;
@@ -2456,16 +2663,851 @@ async function sendEditorMessage() {
     }
 }
 
+// @update path: directly edit the open report and show the inline diff.
+async function runReportEdit(message) {
+    if (!editorDoc) {
+        addReportChatMsg("Open or create a report first, then use @update to edit it.", "bot error");
+        return;
+    }
+    const instruction = message.replace(/^@(update|edit)\b/i, "").trim() || message;
+    const currentMd = htmlToMarkdown(editorPage);
+    const ack = addReportChatMsg("_Computing changes…_", "bot");
+    const originalContent = editorPage.innerHTML;
+    editorPage.innerHTML = `
+        <div class="editor-loading-overlay" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 300px; gap: 16px; color: var(--muted);">
+            <span class="material-symbols-outlined spin" style="font-size: 48px; animation: spin 2s linear infinite;">sync</span>
+            <p style="font-size: 14px; font-weight: 500;">AI is computing changes, please wait…</p>
+        </div>`;
+    try {
+        const res = await fetch(`/documents/${encodeURIComponent(editorDoc.source)}/edit-chat`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ query: instruction, current_markdown: currentMd })
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "Edit request failed.");
+        }
+        const data = await res.json();
+        ack.innerHTML = renderMarkdown("Proposed changes are ready — review them in the report.");
+        showWholeDocumentDiff(data.before, data.after);
+    } catch (err) {
+        ack.className = "rc-msg bot error";
+        ack.textContent = err.message;
+        editorPage.innerHTML = originalContent;
+    }
+}
+
+// Ask path: run a RAG query, stream the answer into the rail, harvest evidence.
+async function runReportAsk(message) {
+    const bot = addReportChatMsg("", "bot");
+    bot.classList.add("is-streaming");
+    let fullText = "";
+    try {
+        const response = await fetch(API_URL, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
+            body: JSON.stringify({ query: message, session_id: currentSessionId, allow_web: false, images: [] }),
+        });
+        if (!response.ok || !response.body) {
+            let detail = "";
+            try { const p = await response.json(); detail = p?.error ? ` ${p.error}` : ""; } catch {}
+            throw new Error(`Request failed.${detail}`);
+        }
+        for await (const event of readSseEvents(response.body)) {
+            if (event.event === "session_info") {
+                const info = safeJson(event.data);
+                if (info?.session_id) { currentSessionId = info.session_id; localStorage.setItem("rag_session_id", currentSessionId); }
+            } else if (event.event === "search_results") {
+                (safeJson(event.data) || []).forEach((r) => addEvidenceChip(r.content || "", r.source || r.title || ""));
+            } else if (event.event === "token") {
+                fullText += event.data;
+                bot.innerHTML = renderMarkdown(fullText);
+                reportChatMessages.scrollTop = reportChatMessages.scrollHeight;
+            } else if (event.event === "message") {
+                fullText = event.data;
+                bot.innerHTML = renderMarkdown(fullText);
+            } else if (event.event === "error") {
+                const payload = safeJson(event.data);
+                throw new Error(payload?.error || "Stream error.");
+            }
+        }
+        if (fullText.trim()) addEvidenceChip(fullText, "Assistant answer");
+        else bot.textContent = "No response was generated.";
+    } catch (err) {
+        bot.className = "rc-msg bot error";
+        bot.textContent = `Error: ${err.message}`;
+    } finally {
+        bot.classList.remove("is-streaming");
+        reportChatMessages.scrollTop = reportChatMessages.scrollHeight;
+    }
+}
 
 editorChatForm.addEventListener("submit", (e) => {
     e.preventDefault();
-    sendEditorMessage();
+    sendReportChat();
+});
+
+/* ── Evidence chips ─────────────────────────────────────────── */
+let evidenceItems = [];
+function addEvidenceChip(text, source) {
+    const clean = (text || "").trim();
+    if (!clean) return;
+    // De-dupe on the first 80 chars.
+    const key = clean.slice(0, 80);
+    if (evidenceItems.some((e) => e.key === key)) return;
+    evidenceItems.unshift({ key, text: clean, source: source || "" });
+    evidenceItems = evidenceItems.slice(0, 30);
+    renderEvidence();
+}
+
+function renderEvidence() {
+    if (evidenceCount) evidenceCount.textContent = evidenceItems.length ? String(evidenceItems.length) : "";
+    if (!evidenceItems.length) {
+        evidenceList.innerHTML = `<div class="empty-state small"><p>Ask a question in the chat — answers and sources land here to drag in.</p></div>`;
+        return;
+    }
+    evidenceList.innerHTML = "";
+    evidenceItems.forEach((item) => {
+        const chip = document.createElement("div");
+        chip.className = "evidence-chip";
+        chip.draggable = true;
+        chip.innerHTML = `<span class="ev-text">${escapeHtml(item.text)}</span>` +
+            (item.source ? `<span class="ev-source">${escapeHtml(item.source)}</span>` : "");
+        chip.addEventListener("dragstart", (e) => {
+            e.dataTransfer.setData("application/x-report-evidence", JSON.stringify(item));
+            e.dataTransfer.effectAllowed = "copy";
+        });
+        chip.addEventListener("click", () => insertEvidence(item));
+        evidenceList.appendChild(chip);
+    });
+}
+
+function evidenceToHtml(item) {
+    const src = item.source ? ` <cite>— ${escapeHtml(item.source)}</cite>` : "";
+    // Keep it short for a citation blockquote.
+    const snippet = item.text.length > 600 ? item.text.slice(0, 600) + "…" : item.text;
+    return `<blockquote>${escapeHtml(snippet)}${src}</blockquote>`;
+}
+function insertEvidence(item) { insertHtmlIntoReport(evidenceToHtml(item)); }
+
+/* ── Library assets (figures & tables) ──────────────────────── */
+async function loadLibraryAssets() {
+    if (!libraryAssets) return;
+    try {
+        const res = await fetch("/library/assets", { headers: authHeaders() });
+        if (!res.ok) throw new Error("failed");
+        const data = await res.json();
+        renderLibraryAssets(data.figures || [], data.tables || []);
+    } catch {
+        libraryAssets.innerHTML = `<div class="empty-state small"><p>Could not load library assets.</p></div>`;
+    }
+}
+
+function renderLibraryAssets(figures, tables) {
+    populateChartTables(tables);
+    libraryAssets.innerHTML = "";
+    if (!figures.length && !tables.length) {
+        libraryAssets.innerHTML = `<div class="empty-state small"><p>No figures or tables in the library yet.</p></div>`;
+    }
+    if (figures.length) {
+        const g = document.createElement("div");
+        g.innerHTML = `<div class="asset-group-title">Figures</div>`;
+        const grid = document.createElement("div");
+        grid.className = "asset-figures";
+        figures.forEach((f) => {
+            const cell = document.createElement("div");
+            cell.className = "asset-fig";
+            cell.draggable = true;
+            cell.title = `${f.name} (${f.source})`;
+            cell.innerHTML = `<img src="${escapeHtml(f.url)}" alt="${escapeHtml(f.name)}" loading="lazy">`;
+            cell.addEventListener("dragstart", (e) => {
+                e.dataTransfer.setData("application/x-report-figure", JSON.stringify(f));
+                e.dataTransfer.effectAllowed = "copy";
+            });
+            cell.addEventListener("click", () => insertFigure(f));
+            grid.appendChild(cell);
+        });
+        g.appendChild(grid);
+        libraryAssets.appendChild(g);
+    }
+    if (tables.length) {
+        const g = document.createElement("div");
+        g.innerHTML = `<div class="asset-group-title">Tables</div>`;
+        tables.forEach((t) => {
+            const row = document.createElement("div");
+            row.className = "asset-table";
+            row.draggable = true;
+            row.innerHTML = `<span class="material-symbols-outlined">table</span><span>${escapeHtml(t.name)} · ${t.row_count} rows</span>`;
+            row.addEventListener("dragstart", (e) => {
+                e.dataTransfer.setData("application/x-report-table", JSON.stringify(t));
+                e.dataTransfer.effectAllowed = "copy";
+            });
+            row.addEventListener("click", () => insertLibraryTable(t));
+            g.appendChild(row);
+        });
+        libraryAssets.appendChild(g);
+    }
+}
+
+async function insertFigure(f) {
+    if (!editorDoc) { alert("Open or create a report first."); return; }
+    // Copy the library figure into this report's images so exports resolve it.
+    try {
+        const imgRes = await fetch(f.url);
+        const blob = await imgRes.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        const up = await fetch(`/documents/${encodeURIComponent(editorDoc.source)}/images`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ data_url: dataUrl, name: f.name })
+        });
+        const data = await up.json();
+        if (!up.ok) throw new Error(data.error || "upload failed");
+        insertHtmlIntoReport(`<p><img src="${escapeHtml(data.url)}" alt="${escapeHtml(f.name)}" class="report-img"></p>`);
+    } catch (err) {
+        alert(`Could not add figure: ${err.message}`);
+    }
+}
+
+function insertLibraryTable(t) {
+    const headers = t.headers || [];
+    const rows = t.rows_preview || [];
+    let html = "<table><thead><tr>";
+    headers.forEach((h) => { html += `<th>${escapeHtml(String(h))}</th>`; });
+    html += "</tr></thead><tbody>";
+    rows.forEach((r) => {
+        html += "<tr>";
+        (Array.isArray(r) ? r : headers.map((h) => r[h] ?? "")).forEach((c) => {
+            html += `<td>${escapeHtml(String(c ?? ""))}</td>`;
+        });
+        html += "</tr>";
+    });
+    html += "</tbody></table>";
+    insertHtmlIntoReport(html);
+}
+
+function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = reject;
+        fr.readAsDataURL(blob);
+    });
+}
+
+/* ── Version history ────────────────────────────────────────── */
+if (editorHistoryBtn) editorHistoryBtn.addEventListener("click", openHistory);
+if (historyClose) historyClose.addEventListener("click", () => { historyModal.hidden = true; });
+if (historyModal) historyModal.addEventListener("click", (e) => { if (e.target === historyModal) historyModal.hidden = true; });
+
+async function openHistory() {
+    if (!editorDoc) return;
+    historyModal.hidden = false;
+    historySub.textContent = editorDoc.title || editorDoc.source;
+    historyList.innerHTML = `<div class="empty-state small"><p>Loading history…</p></div>`;
+    try {
+        const res = await fetch(`/admin/history?source=${encodeURIComponent(editorDoc.source)}&limit=50`, { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not load history.");
+        renderHistory(data.commits || []);
+    } catch (err) {
+        historyList.innerHTML = `<div class="empty-state small"><p>${escapeHtml(err.message)}</p></div>`;
+    }
+}
+
+function renderHistory(commits) {
+    if (!commits.length) {
+        historyList.innerHTML = `<div class="empty-state small"><p>No saved versions yet. Edits are versioned when the report is finalized (on idle or download).</p></div>`;
+        return;
+    }
+    historyList.innerHTML = "";
+    commits.forEach((c, i) => {
+        const when = c.date ? new Date(c.date).toLocaleString() : "";
+        const row = document.createElement("div");
+        row.className = "history-row";
+        row.innerHTML = `
+            <div class="history-meta">
+                <span class="history-msg">${escapeHtml((c.message || "").replace(/^@update\s+\S+:\s*/, ""))}</span>
+                <span class="history-when">${escapeHtml(when)} · ${escapeHtml(c.short_sha || "")}</span>
+            </div>
+            ${i === 0 ? `<span class="history-current">current</span>`
+                     : `<button type="button" class="ghost-button history-restore" data-ref="${escapeHtml(c.sha)}">Restore</button>`}`;
+        historyList.appendChild(row);
+    });
+    historyList.querySelectorAll(".history-restore").forEach((b) => {
+        b.addEventListener("click", () => restoreVersion(b.dataset.ref));
+    });
+}
+
+async function restoreVersion(ref) {
+    if (!editorDoc) return;
+    if (!window.confirm("Restore this version? Current unsaved changes will be replaced.")) return;
+    try {
+        const res = await fetch("/admin/restore", {
+            method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ source: editorDoc.source, ref })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Restore failed.");
+        historyModal.hidden = true;
+        hasUnfinalizedChanges = false;
+        await selectEditorDoc(editorDoc.source);
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+// Flush any pending edits, then open the freshly-regenerated export.
+async function downloadReport(kind) {
+    if (!editorDoc) return;
+    let btn = null;
+    if (kind === "pdf") btn = editorDownloadPdf;
+    else if (kind === "docx") btn = editorDownloadDocx;
+    else if (kind === "markdown") btn = editorDownloadMd;
+    else if (kind === "html") btn = editorDownloadHtml;
+
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    try {
+        if (btn) btn.disabled = true;
+        await runAutoSave();
+    } catch {}
+    finally { if (btn) btn.disabled = false; }
+    window.open(`/workspace/${kind}/${encodeURIComponent(editorDoc.source)}`, "_blank");
+}
+
+/* ── New report modal ───────────────────────────────────────── */
+let selectedTemplate = "blank";
+function openNewReportModal() {
+    if (!isAuthenticated()) { openAuthModal(); return; }
+    newReportTitle.value = "";
+    if (newReportAIPrompt) newReportAIPrompt.value = "";
+    if (newReportUseAI) {
+        newReportUseAI.checked = false;
+        if (aiGenPromptWrap) aiGenPromptWrap.hidden = true;
+        if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
+        if (newReportActions) newReportActions.hidden = false;
+        newReportCreate.innerHTML = `<span class="material-symbols-outlined">note_add</span> Create report`;
+    }
+    newReportStatus.hidden = true;
+    newReportStatus.className = "new-report-status";
+    selectedTemplate = "blank";
+    templateGrid.querySelectorAll(".template-card").forEach((c) =>
+        c.classList.toggle("is-active", c.dataset.template === "blank"));
+    newReportModal.hidden = false;
+    setTimeout(() => newReportTitle.focus(), 30);
+}
+function closeNewReportModal() { newReportModal.hidden = true; }
+
+if (newReportBtn) newReportBtn.addEventListener("click", openNewReportModal);
+if (newReportClose) newReportClose.addEventListener("click", closeNewReportModal);
+if (newReportModal) newReportModal.addEventListener("click", (e) => { if (e.target === newReportModal) closeNewReportModal(); });
+if (templateGrid) templateGrid.addEventListener("click", (e) => {
+    const card = e.target.closest(".template-card");
+    if (!card) return;
+    selectedTemplate = card.dataset.template;
+    templateGrid.querySelectorAll(".template-card").forEach((c) => c.classList.toggle("is-active", c === card));
+});
+if (newReportUseAI) {
+    newReportUseAI.addEventListener("change", () => {
+        if (aiGenPromptWrap) aiGenPromptWrap.hidden = !newReportUseAI.checked;
+        if (newReportCreate) {
+            newReportCreate.innerHTML = newReportUseAI.checked
+                ? `<span class="material-symbols-outlined">auto_awesome</span> Generate with AI`
+                : `<span class="material-symbols-outlined">note_add</span> Create report`;
+        }
+    });
+}
+if (newReportCreate) newReportCreate.addEventListener("click", createNewReport);
+
+async function createNewReport() {
+    const title = newReportTitle.value.trim();
+    if (!title) {
+        newReportStatus.textContent = "Please enter a title.";
+        newReportStatus.className = "new-report-status error";
+        newReportStatus.hidden = false;
+        return;
+    }
+    
+    if (newReportUseAI && newReportUseAI.checked) {
+        const topic = (newReportAIPrompt ? newReportAIPrompt.value.trim() : "");
+        if (!topic) {
+            newReportStatus.textContent = "Please enter report topic/instructions.";
+            newReportStatus.className = "new-report-status error";
+            newReportStatus.hidden = false;
+            return;
+        }
+        await createNewReportAI(title, topic, selectedTemplate);
+        return;
+    }
+
+    newReportCreate.disabled = true;
+    newReportStatus.textContent = "Creating…";
+    newReportStatus.className = "new-report-status";
+    newReportStatus.hidden = false;
+    try {
+        const res = await fetch("/documents/create", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ title, template: selectedTemplate })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            if (res.status === 404) throw new Error("Endpoint /documents/create not found — the backend needs restarting/redeploying with the latest code.");
+            throw new Error(data.error || `Creation failed (HTTP ${res.status}).`);
+        }
+        closeNewReportModal();
+        await loadEditorFileList();
+        await selectEditorDoc(data.source);
+    } catch (err) {
+        newReportStatus.textContent = err.message;
+        newReportStatus.className = "new-report-status error";
+    } finally {
+        newReportCreate.disabled = false;
+    }
+}
+
+async function createNewReportAI(title, topic, template) {
+    newReportStatus.hidden = true;
+    newReportActions.hidden = true;
+    aiGenStatusWrap.hidden = false;
+    aiGenStatusText.textContent = "Connecting to generation engine...";
+    aiGenProgressFill.style.width = "0%";
+    aiGenLogs.innerHTML = "";
+
+    const addLog = (msg) => {
+        const time = new Date().toLocaleTimeString();
+        aiGenLogs.innerHTML += `[${time}] ${escapeHtml(msg)}\n`;
+        aiGenLogs.scrollTop = aiGenLogs.scrollHeight;
+    };
+
+    addLog(`Initiating AI report "${title}" based on template "${template}"...`);
+
+    try {
+        const res = await fetch("/documents/generate", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ title, topic, template })
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `Generation failed (HTTP ${res.status}).`);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let currentSectionTitle = "";
+        let totalSections = 5;
+        let completedSections = 0;
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            let parts = buffer.split("\n\n");
+            buffer = parts.pop(); // Keep the last incomplete part
+
+            for (const part of parts) {
+                if (!part.trim()) continue;
+
+                let event = "message";
+                let data = "";
+
+                const lines = part.split("\n");
+                for (const line of lines) {
+                    if (line.startsWith("event: ")) {
+                        event = line.slice(7).trim();
+                    } else if (line.startsWith("data: ")) {
+                        data = line.slice(6).trim();
+                    }
+                }
+
+                if (event === "status") {
+                    try {
+                        const payload = JSON.parse(data);
+                        const msg = payload.message || data;
+                        aiGenStatusText.textContent = msg;
+                        addLog(msg);
+                        if (msg.includes("Outline created with")) {
+                            const match = msg.match(/with (\d+) sections/);
+                            if (match) {
+                                totalSections = parseInt(match[1], 10);
+                            }
+                        }
+                    } catch (e) {
+                        aiGenStatusText.textContent = data;
+                        addLog(data);
+                    }
+                } else if (event === "section_start") {
+                    try {
+                        const payload = JSON.parse(data);
+                        currentSectionTitle = payload.title;
+                        addLog(`Drafting section: ${currentSectionTitle}...`);
+                    } catch (e) {
+                        addLog("Drafting section...");
+                    }
+                } else if (event === "section_complete") {
+                    try {
+                        const payload = JSON.parse(data);
+                        addLog(`Completed section: ${payload.title}`);
+                        completedSections++;
+                        const pct = Math.round((completedSections / totalSections) * 90);
+                        aiGenProgressFill.style.width = `${pct}%`;
+                    } catch (e) {
+                        addLog("Completed section");
+                    }
+                } else if (event === "complete") {
+                    const payload = JSON.parse(data);
+                    addLog(`Report successfully generated! File: ${payload.source}`);
+                    aiGenProgressFill.style.width = "100%";
+                    setTimeout(async () => {
+                        closeNewReportModal();
+                        // Reset AI fields
+                        if (newReportUseAI) newReportUseAI.checked = false;
+                        if (aiGenPromptWrap) aiGenPromptWrap.hidden = true;
+                        if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
+                        if (newReportActions) newReportActions.hidden = false;
+                        if (newReportCreate) {
+                            newReportCreate.innerHTML = `<span class="material-symbols-outlined">note_add</span> Create report`;
+                        }
+
+                        await loadEditorFileList();
+                        await selectEditorDoc(payload.source);
+                    }, 1500);
+                } else if (event === "error") {
+                    const payload = JSON.parse(data);
+                    throw new Error(payload.error || "Generation error");
+                }
+            }
+        }
+    } catch (err) {
+        addLog(`ERROR: ${err.message}`);
+        newReportStatus.textContent = err.message;
+        newReportStatus.className = "new-report-status error";
+        newReportStatus.hidden = false;
+        if (newReportActions) newReportActions.hidden = false;
+        if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
+    }
+}
+
+/* ── Tools panel toggle ─────────────────────────────────────── */
+if (reportToolsToggleBtn) reportToolsToggleBtn.addEventListener("click", () => {
+    // On wide screens collapse the column; on narrow screens toggle the overlay.
+    if (window.matchMedia("(max-width: 1180px)").matches) {
+        editorView.classList.toggle("report-tools-open");
+    } else {
+        editorView.classList.toggle("report-tools-collapsed");
+    }
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Insert-into-report core + content blocks + drag & drop
+═══════════════════════════════════════════════════════════════ */
+
+// Insert an HTML fragment into the report page at the caret (or append), then save.
+function insertHtmlIntoReport(html, dropRange = null) {
+    if (!editorDoc) { alert("Open or create a report first."); return; }
+    if (editorPage.hidden) return;
+    editorPage.focus();
+
+    const sel = window.getSelection();
+    let range = dropRange;
+    if (!range) {
+        if (sel && sel.rangeCount && editorPage.contains(sel.anchorNode)) {
+            range = sel.getRangeAt(0);
+        }
+    }
+
+    const temp = document.createElement("div");
+    temp.innerHTML = html;
+    const frag = document.createDocumentFragment();
+    let lastNode = null;
+    while (temp.firstChild) { lastNode = temp.firstChild; frag.appendChild(lastNode); }
+
+    if (range && editorPage.contains(range.startContainer)) {
+        range.collapse(false);
+        range.insertNode(frag);
+        if (lastNode) {
+            const after = document.createRange();
+            after.setStartAfter(lastNode);
+            after.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(after);
+        }
+    } else {
+        editorPage.appendChild(frag);
+    }
+    triggerAutoSave();
+}
+
+const BLOCK_HTML = {
+    h1: "<h1>Heading</h1>",
+    h2: "<h2>Heading</h2>",
+    h3: "<h3>Heading</h3>",
+    p: "<p>New paragraph. Click to edit.</p>",
+    ul: "<ul><li>First item</li><li>Second item</li></ul>",
+    ol: "<ol><li>First item</li><li>Second item</li></ol>",
+    quote: "<blockquote>Quote or callout text.</blockquote>",
+    divider: "<hr>",
+    pagebreak: '<div class="page-break" style="page-break-after: always; border-top: 1px dashed var(--border); margin: 18px 0;"></div>',
+    kpi: '<div class="kpi-card"><span class="kpi-value">0</span><span class="kpi-label">Metric</span></div>',
+};
+
+function blockHtml(type) {
+    if (type === "table") {
+        let h = "<table><thead><tr><th>Column A</th><th>Column B</th><th>Column C</th></tr></thead><tbody>";
+        for (let i = 0; i < 3; i++) h += "<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>";
+        return h + "</tbody></table>";
+    }
+    return BLOCK_HTML[type] || "";
+}
+
+// Content-block buttons: click to insert, drag to place.
+if (blockGrid) {
+    blockGrid.querySelectorAll(".block-item").forEach((btn) => {
+        btn.addEventListener("click", () => insertHtmlIntoReport(blockHtml(btn.dataset.block)));
+        btn.addEventListener("dragstart", (e) => {
+            e.dataTransfer.setData("application/x-report-block", btn.dataset.block);
+            e.dataTransfer.effectAllowed = "copy";
+        });
+    });
+}
+
+// The report page is a drop target for blocks, evidence, figures and tables.
+editorPage.addEventListener("dragover", (e) => {
+    if (editorPage.hidden) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    editorPage.classList.add("drop-active");
+});
+editorPage.addEventListener("dragleave", () => editorPage.classList.remove("drop-active"));
+editorPage.addEventListener("drop", (e) => {
+    editorPage.classList.remove("drop-active");
+    if (editorPage.hidden) return;
+    const dt = e.dataTransfer;
+    let html = null;
+    const block = dt.getData("application/x-report-block");
+    const ev = dt.getData("application/x-report-evidence");
+    const fig = dt.getData("application/x-report-figure");
+    const tbl = dt.getData("application/x-report-table");
+    if (block) html = blockHtml(block);
+    else if (ev) { try { insertEvidence(JSON.parse(ev)); } catch {} return e.preventDefault(); }
+    else if (fig) { try { insertFigure(JSON.parse(fig)); } catch {} return e.preventDefault(); }
+    else if (tbl) { try { insertLibraryTable(JSON.parse(tbl)); } catch {} return e.preventDefault(); }
+    if (!html) return;
+    e.preventDefault();
+    let range = null;
+    if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(e.clientX, e.clientY);
+    else if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+        if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); }
+    }
+    insertHtmlIntoReport(html, range);
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Chart builder (Chart.js) → PNG → workspace image → report
+═══════════════════════════════════════════════════════════════ */
+const chartTypeEl = document.getElementById("chartType");
+const chartTitleEl = document.getElementById("chartTitle");
+const chartDataEl = document.getElementById("chartData");
+const chartTableSelect = document.getElementById("chartTableSelect");
+const chartPreviewCanvas = document.getElementById("chartPreview");
+const chartInsertBtn = document.getElementById("chartInsertBtn");
+const chartAiBtn = document.getElementById("chartAiBtn");
+let chartPreviewInstance = null;
+let chartTablesCache = [];
+
+function parseChartData(text) {
+    const labels = [], values = [];
+    (text || "").split("\n").forEach((line) => {
+        const t = line.trim();
+        if (!t) return;
+        const idx = t.lastIndexOf(",");
+        if (idx === -1) return;
+        const label = t.slice(0, idx).trim();
+        const val = parseFloat(t.slice(idx + 1).trim().replace(/[^0-9.\-]/g, ""));
+        if (label && !isNaN(val)) { labels.push(label); values.push(val); }
+    });
+    return { labels, values };
+}
+
+const CHART_PALETTE = ["#c96442", "#e0a458", "#6b8f71", "#4f7cac", "#9b6a9e", "#c9a94b", "#7a9e9f", "#b5654a"];
+
+function buildChartConfig() {
+    const type = chartTypeEl ? chartTypeEl.value : "bar";
+    const title = chartTitleEl ? chartTitleEl.value.trim() : "";
+    const { labels, values } = parseChartData(chartDataEl ? chartDataEl.value : "");
+    const multi = ["pie", "doughnut", "polarArea"].includes(type);
+    return {
+        type,
+        data: {
+            labels,
+            datasets: [{
+                label: title || "Series",
+                data: values,
+                backgroundColor: multi ? labels.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]) : "#c96442",
+                borderColor: multi ? "#fff" : "#c96442",
+                borderWidth: multi ? 2 : 1,
+                fill: type === "line" ? false : true,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: { display: multi, position: "bottom" },
+                title: { display: Boolean(title), text: title },
+            },
+            scales: (type === "bar" || type === "line") ? { y: { beginAtZero: true } } : {},
+        },
+    };
+}
+
+function renderChartPreview() {
+    if (typeof Chart === "undefined" || !chartPreviewCanvas) return;
+    const wrap = chartPreviewCanvas.parentElement;
+    const cfg = buildChartConfig();
+    if (!cfg.data.labels.length) {
+        if (chartPreviewInstance) { chartPreviewInstance.destroy(); chartPreviewInstance = null; }
+        if (wrap) wrap.classList.remove("has-chart");
+        return;
+    }
+    if (chartPreviewInstance) chartPreviewInstance.destroy();
+    chartPreviewInstance = new Chart(chartPreviewCanvas, cfg);
+    if (wrap) wrap.classList.add("has-chart");
+}
+
+[chartTypeEl, chartTitleEl, chartDataEl].forEach((el) => {
+    if (el) el.addEventListener("input", () => renderChartPreview());
+});
+
+if (chartTableSelect) chartTableSelect.addEventListener("change", () => {
+    const idx = chartTableSelect.value;
+    if (idx === "") return;
+    const t = chartTablesCache[parseInt(idx)];
+    if (!t) return;
+    // Use the first column as label and the first numeric column as value.
+    const headers = t.headers || [];
+    const rows = t.rows_preview || [];
+    let numCol = 1;
+    if (rows.length) {
+        for (let c = 1; c < headers.length; c++) {
+            const v = Array.isArray(rows[0]) ? rows[0][c] : rows[0][headers[c]];
+            if (!isNaN(parseFloat(v))) { numCol = c; break; }
+        }
+    }
+    const lines = rows.map((r) => {
+        const label = Array.isArray(r) ? r[0] : r[headers[0]];
+        const val = Array.isArray(r) ? r[numCol] : r[headers[numCol]];
+        return `${label}, ${val}`;
+    });
+    if (chartDataEl) chartDataEl.value = lines.join("\n");
+    if (chartTitleEl && !chartTitleEl.value) chartTitleEl.value = headers[numCol] || "";
+    renderChartPreview();
+});
+
+// Populate the "from table" dropdown when assets load.
+function populateChartTables(tables) {
+    chartTablesCache = tables || [];
+    if (!chartTableSelect) return;
+    chartTableSelect.innerHTML = `<option value="">— manual entry —</option>`;
+    chartTablesCache.forEach((t, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = `${t.name} (${t.source})`;
+        chartTableSelect.appendChild(opt);
+    });
+}
+
+let currentEditingChartContainer = null;
+
+if (chartInsertBtn) chartInsertBtn.addEventListener("click", async () => {
+    if (!editorDoc) { alert("Open or create a report first."); return; }
+    if (typeof Chart === "undefined") { alert("Chart library is still loading — try again in a moment."); return; }
+    const cfg = buildChartConfig();
+    if (!cfg.data.labels.length) { alert("Add some data first (one 'label, value' per line)."); return; }
+
+    // Render offscreen on a white background for clean export.
+    const off = document.createElement("canvas");
+    off.width = 900; off.height = 520;
+    document.body.appendChild(off);
+    const ctx = off.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, off.width, off.height);
+    const inst = new Chart(off, cfg);
+    // Chart.js draws synchronously with animation:false; give one frame just in case.
+    await new Promise((r) => requestAnimationFrame(r));
+    const dataUrl = off.toDataURL("image/png");
+    inst.destroy();
+    off.remove();
+
+    chartInsertBtn.disabled = true;
+    try {
+        const res = await fetch(`/documents/${encodeURIComponent(editorDoc.source)}/images`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ data_url: dataUrl, name: `chart_${Date.now()}` })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Chart upload failed.");
+        const alt = (chartTitleEl && chartTitleEl.value.trim()) || "chart";
+        
+        const spec = {
+            type: cfg.type,
+            title: cfg.options.plugins.title.text || "",
+            labels: cfg.data.labels,
+            values: cfg.data.datasets[0].data
+        };
+
+        if (currentEditingChartContainer) {
+            const img = currentEditingChartContainer.querySelector("img");
+            if (img) {
+                img.src = data.url;
+                img.alt = alt;
+            }
+            currentEditingChartContainer.dataset.spec = JSON.stringify(spec);
+            currentEditingChartContainer = null;
+            chartInsertBtn.innerHTML = `<span class="material-symbols-outlined">insert_chart</span> Insert chart`;
+            triggerAutoSave();
+        } else {
+            const htmlBlock = `<div class="report-chart-container" data-spec="${escapeHtml(JSON.stringify(spec))}" contenteditable="false"><img src="${escapeHtml(data.url)}" alt="${escapeHtml(alt)}" class="report-img report-chart"></div>`;
+            insertHtmlIntoReport(htmlBlock);
+        }
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        chartInsertBtn.disabled = false;
+    }
+});
+
+// "Ask AI": route the request through the existing table-driven chart path via @update.
+if (chartAiBtn) chartAiBtn.addEventListener("click", () => {
+    const type = chartTypeEl ? chartTypeEl.value : "bar";
+    const src = chartTableSelect && chartTableSelect.value !== ""
+        ? (chartTablesCache[parseInt(chartTableSelect.value)] || {}).name || ""
+        : "";
+    editorUserInput.value = `@update add a ${type} chart${src ? ` from the ${src} table` : ""} to this report`;
+    editorUserInput.focus();
+    autoResizeEditorInput();
 });
 
 async function selectEditorDoc(source) {
+    // Flush any pending finalize for the doc we're leaving, then reset save state.
+    if (hasUnfinalizedChanges) { try { await finalizeSave(); } catch {} }
+    if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+    if (finalizeTimer) { clearTimeout(finalizeTimer); finalizeTimer = null; }
+    hasUnfinalizedChanges = false;
+
     editorDoc = null;
     editorPage.hidden = true;
     editorDownloadDocx.disabled = true;
+    if (editorDownloadPdf) editorDownloadPdf.disabled = true;
     editorFileList.querySelectorAll(".library-row").forEach((r) =>
         r.classList.toggle("is-active", r.dataset.source === source));
 
@@ -2483,20 +3525,701 @@ async function selectEditorDoc(source) {
         editorPage.innerHTML = renderMarkdown(editorDoc.markdown);
         editorPage.hidden = false;
         
-        // Enable download button
+        // Enable download buttons — flush pending edits first so exports are current.
         editorDownloadDocx.disabled = false;
-        editorDownloadDocx.onclick = () => {
-            window.open(`/workspace/docx/${encodeURIComponent(source)}`, "_blank");
-        };
+        editorDownloadDocx.onclick = () => downloadReport("docx");
+        if (editorDownloadPdf) {
+            editorDownloadPdf.disabled = false;
+            editorDownloadPdf.onclick = () => downloadReport("pdf");
+        }
+        if (editorDownloadMd) {
+            editorDownloadMd.disabled = false;
+            editorDownloadMd.onclick = () => downloadReport("markdown");
+        }
+        if (editorDownloadHtml) {
+            editorDownloadHtml.disabled = false;
+            editorDownloadHtml.onclick = () => downloadReport("html");
+        }
+        if (editorHistoryBtn) editorHistoryBtn.disabled = false;
+
+        // Refresh the tools panel's library assets for this workspace
+        loadLibraryAssets();
 
         // Hide save status initially
         setEditorSaveStatus("saved");
+
+        // Rebuild Outline
+        rebuildOutline();
     } catch (err) {
         console.error("selectEditorDoc error:", err);
         editorPage.innerHTML = `<p style="color: var(--danger); padding: 20px;">Could not load document.</p>`;
         editorPage.hidden = false;
     }
 }
+
+/* ── Selection floating toolbar AI assistant ──────────────────── */
+const editorSelectionToolbar = document.getElementById("editorSelectionToolbar");
+const stCustomPrompt = document.getElementById("stCustomPrompt");
+const stCustomSend = document.getElementById("stCustomSend");
+
+let currentSelectionRange = null;
+
+function handleSelectionChange() {
+    if (!editorDoc) {
+        hideSelectionToolbar();
+        return;
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        hideSelectionToolbar();
+        return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!editorPage.contains(range.commonAncestorContainer)) {
+        hideSelectionToolbar();
+        return;
+    }
+
+    const text = selection.toString().trim();
+    if (!text) {
+        hideSelectionToolbar();
+        return;
+    }
+
+    currentSelectionRange = range.cloneRange();
+
+    const rect = range.getBoundingClientRect();
+    if (editorSelectionToolbar) {
+        editorSelectionToolbar.style.left = `${rect.left + rect.width / 2}px`;
+        editorSelectionToolbar.style.top = `${rect.top}px`;
+        editorSelectionToolbar.hidden = false;
+    }
+}
+
+function hideSelectionToolbar() {
+    if (editorSelectionToolbar) editorSelectionToolbar.hidden = true;
+}
+
+document.addEventListener("selectionchange", handleSelectionChange);
+window.addEventListener("scroll", hideSelectionToolbar, true);
+window.addEventListener("resize", hideSelectionToolbar);
+
+document.addEventListener("mousedown", (e) => {
+    if (editorSelectionToolbar && !editorSelectionToolbar.contains(e.target) && !editorPage.contains(e.target)) {
+        // Delay slightly to allow button click events to fire before hiding
+        setTimeout(() => {
+            const activeSel = window.getSelection();
+            if (!activeSel || activeSel.isCollapsed) {
+                hideSelectionToolbar();
+            }
+        }, 100);
+    }
+});
+
+if (editorSelectionToolbar) {
+    editorSelectionToolbar.querySelectorAll(".st-btn").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const action = btn.dataset.action;
+            let prompt = "";
+            if (action === "improve") prompt = "Improve the writing quality, tone, and grammar of this text.";
+            else if (action === "shorten") prompt = "Make this text significantly shorter and more concise.";
+            else if (action === "expand") prompt = "Expand this text, adding relevant details and professional language.";
+            else if (action === "table") prompt = "Convert this plain text or lists into a well-structured markdown table.";
+
+            await runSelectionEdit(prompt);
+        });
+    });
+
+    if (stCustomSend) {
+        stCustomSend.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const prompt = stCustomPrompt.value.trim();
+            if (!prompt) return;
+            await runSelectionEdit(prompt);
+        });
+    }
+
+    if (stCustomPrompt) {
+        stCustomPrompt.addEventListener("keydown", async (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                const prompt = stCustomPrompt.value.trim();
+                if (!prompt) return;
+                await runSelectionEdit(prompt);
+            }
+        });
+        stCustomPrompt.addEventListener("mousedown", (e) => {
+            // Prevent selection toolbar from closing when clicking inside its input box
+            e.stopPropagation();
+        });
+    }
+}
+
+async function runSelectionEdit(prompt) {
+    if (!editorDoc || !currentSelectionRange) return;
+    const selectedText = currentSelectionRange.toString().trim();
+    if (!selectedText) return;
+
+    const inputs = editorSelectionToolbar.querySelectorAll("button, input");
+    inputs.forEach(el => el.disabled = true);
+    stCustomPrompt.placeholder = "Processing...";
+    stCustomPrompt.value = "";
+
+    try {
+        const res = await fetch(`/documents/${encodeURIComponent(editorDoc.source)}/edit-chat`, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({
+                query: prompt,
+                current_markdown: selectedText
+            })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "AI edit failed.");
+
+        replaceSelectionWithContent(data.after || data.markdown || "");
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        inputs.forEach(el => el.disabled = false);
+        stCustomPrompt.placeholder = "Ask AI to edit selection...";
+        hideSelectionToolbar();
+    }
+}
+
+function replaceSelectionWithContent(newContent) {
+    if (!currentSelectionRange) return;
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(currentSelectionRange);
+
+    const html = renderMarkdown(newContent);
+    document.execCommand("insertHTML", false, html);
+
+    hideSelectionToolbar();
+    triggerAutoSave();
+}
+
+/* ── Slash Command Menu ───────────────────────────────────────── */
+const editorSlashMenu = document.getElementById("editorSlashMenu");
+let slashMenuTriggered = false;
+let slashFilterText = "";
+
+function showSlashMenu(coords) {
+    if (!editorSlashMenu) return;
+    editorSlashMenu.style.left = `${coords.left}px`;
+    editorSlashMenu.style.top = `${coords.top}px`;
+    editorSlashMenu.hidden = false;
+    slashMenuTriggered = true;
+    slashFilterText = "";
+    filterSlashMenu();
+}
+
+function hideSlashMenu() {
+    if (editorSlashMenu) {
+        editorSlashMenu.hidden = true;
+        slashMenuTriggered = false;
+        slashFilterText = "";
+    }
+}
+
+function filterSlashMenu() {
+    if (!editorSlashMenu) return;
+    const items = Array.from(editorSlashMenu.querySelectorAll(".sm-item"));
+    let visibleCount = 0;
+
+    items.forEach((item) => {
+        const name = item.querySelector(".sm-item-name").textContent.toLowerCase();
+        const desc = item.querySelector(".sm-item-desc").textContent.toLowerCase();
+
+        const matches = name.includes(slashFilterText.toLowerCase()) || desc.includes(slashFilterText.toLowerCase());
+        item.style.display = matches ? "flex" : "none";
+
+        if (matches) {
+            item.classList.toggle("is-active", visibleCount === 0);
+            visibleCount++;
+        } else {
+            item.classList.remove("is-active");
+        }
+    });
+
+    if (visibleCount === 0) {
+        editorSlashMenu.hidden = true;
+    } else {
+        editorSlashMenu.hidden = false;
+    }
+}
+
+function getSelectionCoords() {
+    const sel = window.getSelection();
+    if (sel.rangeCount === 0) return { left: 0, top: 0 };
+    const range = sel.getRangeAt(0).cloneRange();
+    range.collapse(true);
+    const rect = range.getBoundingClientRect();
+    return { left: rect.left, top: rect.bottom }; // Position below cursor
+}
+
+function executeSlashCommand(command) {
+    const sel = window.getSelection();
+    if (sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+
+    const node = range.startContainer;
+    const offset = range.startOffset;
+    if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.nodeValue;
+        const slashIdx = text.lastIndexOf("/", offset);
+        if (slashIdx !== -1) {
+            range.setStart(node, slashIdx);
+            range.setEnd(node, offset);
+            range.deleteContents();
+        }
+    }
+
+    let html = "";
+    if (command === "h1") html = "<h1>Heading 1</h1>";
+    else if (command === "h2") html = "<h2>Heading 2</h2>";
+    else if (command === "h3") html = "<h3>Heading 3</h3>";
+    else if (command === "bullet") html = "<ul><li>List item</li></ul>";
+    else if (command === "number") html = "<ol><li>List item</li></ol>";
+    else if (command === "table") {
+        html = "<table><thead><tr><th>Header 1</th><th>Header 2</th></tr></thead><tbody><tr><td>Cell 1</td><td>Cell 2</td></tr></tbody></table>";
+    } else if (command === "kpi") {
+        html = `<div class="kpi-card" contenteditable="false"><span class="kpi-value" contenteditable="true">12.5K</span><span class="kpi-label" contenteditable="true">KPI Metric</span></div>`;
+    } else if (command === "break") {
+        html = `<div class="page-break" style="page-break-after: always;" contenteditable="false"></div>`;
+    }
+
+    document.execCommand("insertHTML", false, html);
+    hideSlashMenu();
+    triggerAutoSave();
+}
+
+editorPage.addEventListener("keydown", (e) => {
+    if (slashMenuTriggered) {
+        const activeItem = editorSlashMenu.querySelector(".sm-item.is-active");
+
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            const items = Array.from(editorSlashMenu.querySelectorAll(".sm-item")).filter(i => i.style.display !== "none");
+            if (items.length === 0) return;
+
+            let idx = items.indexOf(activeItem);
+            if (e.key === "ArrowDown") idx = (idx + 1) % items.length;
+            else idx = (idx - 1 + items.length) % items.length;
+
+            items.forEach((item, i) => item.classList.toggle("is-active", i === idx));
+            return;
+        }
+
+        if (e.key === "Enter") {
+            e.preventDefault();
+            if (activeItem) {
+                executeSlashCommand(activeItem.dataset.command);
+            }
+            return;
+        }
+
+        if (e.key === "Escape") {
+            e.preventDefault();
+            hideSlashMenu();
+            return;
+        }
+
+        if (e.key === " ") {
+            hideSlashMenu();
+            return;
+        }
+    }
+});
+
+editorPage.addEventListener("keyup", (e) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+        hideSlashMenu();
+        return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const node = range.startContainer;
+    const offset = range.startOffset;
+
+    if (node.nodeType !== Node.TEXT_NODE) {
+        hideSlashMenu();
+        return;
+    }
+
+    const text = node.nodeValue;
+    const slashIdx = text.lastIndexOf("/", offset);
+
+    if (slashIdx === -1) {
+        hideSlashMenu();
+        return;
+    }
+
+    const beforeSlash = text.substring(0, slashIdx);
+    const hasSpaceBefore = beforeSlash.length === 0 || /\s$/.test(beforeSlash);
+
+    if (!hasSpaceBefore) {
+        hideSlashMenu();
+        return;
+    }
+
+    const filter = text.substring(slashIdx + 1, offset);
+
+    if (e.key === "/" && !slashMenuTriggered) {
+        const coords = getSelectionCoords();
+        showSlashMenu(coords);
+    } else if (slashMenuTriggered) {
+        if (offset < slashIdx) {
+            hideSlashMenu();
+        } else {
+            slashFilterText = filter;
+            filterSlashMenu();
+        }
+    }
+});
+
+document.addEventListener("mousedown", (e) => {
+    if (editorSlashMenu && !editorSlashMenu.contains(e.target)) {
+        hideSlashMenu();
+    }
+});
+
+if (editorSlashMenu) {
+    editorSlashMenu.querySelectorAll(".sm-item").forEach((item) => {
+        item.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            executeSlashCommand(item.dataset.command);
+        });
+    });
+}
+
+/* ── Table formatting tools ──────────────────────────────────── */
+const editorTableTools = document.getElementById("editorTableTools");
+const tableToolsDivider = document.querySelector(".table-tools-divider");
+
+function updateTableToolsVisibility() {
+    if (!editorTableTools) return;
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        let container = range.commonAncestorContainer;
+        if (container.nodeType === Node.TEXT_NODE) {
+            container = container.parentNode;
+        }
+        const cell = container.closest ? container.closest("td, th") : null;
+        if (cell && editorPage.contains(cell)) {
+            editorTableTools.hidden = false;
+            if (tableToolsDivider) tableToolsDivider.hidden = false;
+            return;
+        }
+    }
+    editorTableTools.hidden = true;
+    if (tableToolsDivider) tableToolsDivider.hidden = true;
+}
+
+document.addEventListener("selectionchange", updateTableToolsVisibility);
+
+if (editorTableTools) {
+    document.getElementById("tableAddRowAbove").addEventListener("click", (e) => { e.preventDefault(); addTableRow(true); });
+    document.getElementById("tableAddRowBelow").addEventListener("click", (e) => { e.preventDefault(); addTableRow(false); });
+    document.getElementById("tableDeleteRow").addEventListener("click", (e) => { e.preventDefault(); deleteTableRow(); });
+    document.getElementById("tableAddColLeft").addEventListener("click", (e) => { e.preventDefault(); addTableColumn(true); });
+    document.getElementById("tableAddColRight").addEventListener("click", (e) => { e.preventDefault(); addTableColumn(false); });
+    document.getElementById("tableDeleteCol").addEventListener("click", (e) => { e.preventDefault(); deleteTableColumn(); });
+}
+
+function getActiveTableCell() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    let container = range.commonAncestorContainer;
+    if (container.nodeType === Node.TEXT_NODE) container = container.parentNode;
+    const cell = container.closest ? container.closest("td, th") : null;
+    return (cell && editorPage.contains(cell)) ? cell : null;
+}
+
+function addTableRow(above = false) {
+    const cell = getActiveTableCell();
+    if (!cell) return;
+    const row = cell.closest("tr");
+    const colCount = row.cells.length;
+
+    const newRow = document.createElement("tr");
+    for (let i = 0; i < colCount; i++) {
+        const newCell = document.createElement(cell.tagName.toLowerCase() === "th" ? "th" : "td");
+        newCell.innerHTML = "<br>";
+        newRow.appendChild(newCell);
+    }
+
+    if (above) {
+        row.parentNode.insertBefore(newRow, row);
+    } else {
+        row.parentNode.insertBefore(newRow, row.nextSibling);
+    }
+    triggerAutoSave();
+}
+
+function deleteTableRow() {
+    const cell = getActiveTableCell();
+    if (!cell) return;
+    const row = cell.closest("tr");
+    const table = row.closest("table");
+
+    if (table.rows.length <= 1) {
+        table.remove();
+    } else {
+        row.remove();
+    }
+    triggerAutoSave();
+}
+
+function addTableColumn(left = false) {
+    const cell = getActiveTableCell();
+    if (!cell) return;
+    const cellIdx = cell.cellIndex;
+    const table = cell.closest("table");
+
+    Array.from(table.rows).forEach((row) => {
+        const targetCell = row.cells[cellIdx];
+        if (targetCell) {
+            const newCell = document.createElement(targetCell.tagName.toLowerCase());
+            newCell.innerHTML = "<br>";
+            if (left) {
+                row.insertBefore(newCell, targetCell);
+            } else {
+                row.insertBefore(newCell, targetCell.nextSibling);
+            }
+        }
+    });
+    triggerAutoSave();
+}
+
+function deleteTableColumn() {
+    const cell = getActiveTableCell();
+    if (!cell) return;
+    const cellIdx = cell.cellIndex;
+    const table = cell.closest("table");
+    const colCount = cell.closest("tr").cells.length;
+
+    if (colCount <= 1) {
+        table.remove();
+    } else {
+        Array.from(table.rows).forEach((row) => {
+            if (row.cells[cellIdx]) {
+                row.cells[cellIdx].remove();
+            }
+        });
+    }
+    triggerAutoSave();
+}
+
+/* ── Image resize toolbar ────────────────────────────────────── */
+const editorImageResizeMenu = document.createElement("div");
+editorImageResizeMenu.className = "image-resize-menu";
+editorImageResizeMenu.hidden = true;
+editorImageResizeMenu.innerHTML = `
+    <button type="button" data-size="25%">25%</button>
+    <button type="button" data-size="50%">50%</button>
+    <button type="button" data-size="75%">75%</button>
+    <button type="button" data-size="100%">100%</button>
+    <div class="st-divider"></div>
+    <button type="button" id="imgDeleteBtn" class="danger"><span class="material-symbols-outlined">delete</span></button>
+`;
+document.body.appendChild(editorImageResizeMenu);
+
+let currentResizingImage = null;
+
+editorPage.addEventListener("click", (e) => {
+    // 1. Image Clicks for resizing
+    if (e.target.tagName === "IMG" && !e.target.closest(".report-chart-container")) {
+        currentResizingImage = e.target;
+        const rect = e.target.getBoundingClientRect();
+        editorImageResizeMenu.style.left = `${rect.left + rect.width / 2}px`;
+        editorImageResizeMenu.style.top = `${rect.top}px`;
+        editorImageResizeMenu.hidden = false;
+        e.stopPropagation();
+    } else {
+        if (!e.target.closest(".image-resize-menu")) {
+            editorImageResizeMenu.hidden = true;
+            currentResizingImage = null;
+        }
+    }
+
+    // 2. Chart Clicks for re-editing
+    const chartContainer = e.target.closest(".report-chart-container");
+    if (chartContainer) {
+        e.preventDefault();
+        e.stopPropagation();
+        const specStr = chartContainer.dataset.spec;
+        if (specStr) {
+            try {
+                const spec = JSON.parse(specStr);
+                if (chartTypeEl) chartTypeEl.value = spec.type || "bar";
+                if (chartTitleEl) chartTitleEl.value = spec.title || "";
+                if (chartDataEl) {
+                    const lines = (spec.labels || []).map((l, i) => `${l}, ${spec.values[i] || 0}`);
+                    chartDataEl.value = lines.join("\n");
+                }
+                renderChartPreview();
+
+                currentEditingChartContainer = chartContainer;
+                if (chartInsertBtn) {
+                    chartInsertBtn.innerHTML = `<span class="material-symbols-outlined">edit</span> Update Chart`;
+                }
+
+                if (window.matchMedia("(max-width: 1180px)").matches) {
+                    editorView.classList.add("report-tools-open");
+                }
+            } catch (err) {
+                console.error("Failed to parse chart spec:", err);
+            }
+        }
+    } else {
+        if (!e.target.closest("#reportTools") && currentEditingChartContainer) {
+            currentEditingChartContainer = null;
+            if (chartInsertBtn) {
+                chartInsertBtn.innerHTML = `<span class="material-symbols-outlined">insert_chart</span> Insert chart`;
+            }
+        }
+    }
+});
+
+editorImageResizeMenu.querySelectorAll("button[data-size]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (currentResizingImage) {
+            const size = btn.dataset.size;
+            currentResizingImage.style.width = size;
+            currentResizingImage.style.height = "auto";
+            currentResizingImage.style.maxWidth = "100%";
+            triggerAutoSave();
+        }
+        editorImageResizeMenu.hidden = true;
+        currentResizingImage = null;
+    });
+});
+
+const imgDeleteBtn = document.getElementById("imgDeleteBtn");
+if (imgDeleteBtn) {
+    imgDeleteBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (currentResizingImage) {
+            currentResizingImage.remove();
+            triggerAutoSave();
+        }
+        editorImageResizeMenu.hidden = true;
+        currentResizingImage = null;
+    });
+}
+
+/* ── Outline & TOC panel ─────────────────────────────────────── */
+function rebuildOutline() {
+    if (!outlineList || !editorPage) return;
+    outlineList.innerHTML = "";
+
+    const headings = Array.from(editorPage.querySelectorAll("h1, h2, h3"));
+    if (headings.length === 0) {
+        outlineList.innerHTML = `<p style="font-size: 11px; color: var(--faint); padding: 0 8px; line-height: 1.4;">No headings yet. Use Heading levels to structure your document.</p>`;
+        return;
+    }
+
+    headings.forEach((heading, idx) => {
+        if (!heading.id) {
+            heading.id = `heading-${idx}-${Date.now().toString(36)}`;
+        }
+
+        const item = document.createElement("div");
+        const level = parseInt(heading.tagName[1]);
+        item.className = `outline-item level-${level}`;
+        item.textContent = heading.textContent.trim() || `Heading ${level}`;
+        item.title = heading.textContent.trim() || `Heading ${level}`;
+        item.addEventListener("click", () => {
+            heading.scrollIntoView({ behavior: "smooth", block: "start" });
+            heading.style.transition = "background-color 0.3s";
+            heading.style.backgroundColor = "var(--accent-soft)";
+            setTimeout(() => heading.style.backgroundColor = "", 1000);
+        });
+        outlineList.appendChild(item);
+    });
+}
+
+function insertTOC() {
+    const headings = Array.from(editorPage.querySelectorAll("h1, h2, h3"));
+    if (headings.length === 0) {
+        alert("Please add some headings to generate a Table of Contents.");
+        return;
+    }
+
+    let html = `<div class="table-of-contents" contenteditable="false">`;
+    html += `<h4>Table of Contents</h4><ul>`;
+    headings.forEach((h) => {
+        if (!h.id) {
+            h.id = `heading-${Math.random().toString(36).substr(2, 9)}`;
+        }
+        const level = parseInt(h.tagName[1]);
+        const indent = level > 1 ? ` style="margin-left: ${(level - 1) * 16}px;"` : "";
+        html += `<li${indent}><a href="#${h.id}" class="toc-link">${escapeHtml(h.textContent.trim())}</a></li>`;
+    });
+    html += `</ul></div><p><br></p>`;
+
+    document.execCommand("insertHTML", false, html);
+    rebuildOutline();
+    triggerAutoSave();
+}
+
+if (editorOutlineToggleBtn) {
+    editorOutlineToggleBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (editorOutlinePanel) {
+            editorOutlinePanel.hidden = !editorOutlinePanel.hidden;
+            rebuildOutline();
+        }
+    });
+}
+
+if (insertTOCBtn) {
+    insertTOCBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        insertTOC();
+    });
+}
+
+// Intercept smooth scroll for TOC links & open citation panel for cite links
+editorPage.addEventListener("click", (e) => {
+    const link = e.target.closest(".toc-link");
+    if (link) {
+        e.preventDefault();
+        const targetId = link.getAttribute("href").slice(1);
+        const target = editorPage.querySelector(`#${targetId}`);
+        if (target) {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    }
+
+    const cite = e.target.closest(".citation-link");
+    if (cite) {
+        e.preventDefault();
+        const filename = cite.dataset.filename;
+        const snippet = cite.dataset.snippet;
+        const srcObj = {
+            source: filename,
+            snippet: snippet,
+            content: snippet,
+            parent_content: snippet
+        };
+        openCitationPanel(srcObj, [srcObj]);
+    }
+});
+
+// Register change scanner
+editorPage.addEventListener("input", rebuildOutline);
 
 chatForm.addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
 

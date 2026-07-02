@@ -105,6 +105,64 @@ def render(source: str) -> Path:
         elif el.name == "hr":
             doc.add_paragraph("---")
 
+        # Div elements (cover-page, page-break, chart, KPI card, TOC)
+        elif el.name == "div":
+            classes = el.get("class", [])
+            if "page-break" in classes:
+                doc.add_page_break()
+            elif "cover-page" in classes:
+                title_el = el.find(class_="cover-title")
+                sub_el = el.find(class_="cover-subtitle")
+                meta_el = el.find(class_="cover-meta")
+
+                title_text = title_el.text.strip() if title_el else "Untitled Report"
+                sub_text = sub_el.text.strip() if sub_el else ""
+                meta_text = meta_el.text.strip() if meta_el else ""
+
+                for _ in range(4):
+                    doc.add_paragraph()
+
+                p_title = doc.add_paragraph()
+                p_title.alignment = 1  # Center
+                run_title = p_title.add_run(title_text)
+                run_title.bold = True
+                run_title.font.size = Pt(28)
+
+                if sub_text:
+                    p_sub = doc.add_paragraph()
+                    p_sub.alignment = 1
+                    run_sub = p_sub.add_run(sub_text)
+                    run_sub.font.size = Pt(16)
+                    run_sub.font.italic = True
+
+                for _ in range(6):
+                    doc.add_paragraph()
+
+                if meta_text:
+                    p_meta = doc.add_paragraph()
+                    p_meta.alignment = 1
+                    run_meta = p_meta.add_run(meta_text)
+                    run_meta.font.size = Pt(11)
+
+                doc.add_page_break()
+            elif "report-chart-container" in classes:
+                img = el.find("img")
+                if img:
+                    p = doc.add_paragraph()
+                    _process_inline(p, el, source)
+            elif "kpi-card" in classes:
+                val_el = el.find(class_="kpi-value")
+                lbl_el = el.find(class_="kpi-label")
+                val_text = val_el.text.strip() if val_el else ""
+                lbl_text = lbl_el.text.strip() if lbl_el else ""
+                if val_text or lbl_text:
+                    p = doc.add_paragraph()
+                    run = p.add_run(f"★ {val_text} — {lbl_text}")
+                    run.bold = True
+            else:
+                p = doc.add_paragraph()
+                _process_inline(p, el, source)
+
     out_path = paths.workspace_docx_path(source)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))

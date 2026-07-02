@@ -2,6 +2,7 @@ import asyncio
 import json
 import mimetypes
 import re
+import secrets
 import sys
 import os
 import time
@@ -582,6 +583,68 @@ async def download_workspace_docx(source: str):
     )
 
 
+@app.get("/workspace/markdown/{source:path}")
+async def download_workspace_markdown(source: str):
+    """Serve the workspace Markdown file directly."""
+    md_path = paths.workspace_md_path(source)
+    try:
+        md_path.resolve().relative_to(paths.WORKSPACE_MD_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+    if not md_path.exists():
+        return JSONResponse({"error": "Markdown file not found."}, status_code=404)
+    return FileResponse(
+        str(md_path),
+        media_type="text/markdown",
+        filename=md_path.name
+    )
+
+
+@app.get("/workspace/html/{source:path}")
+async def download_workspace_html(source: str):
+    """Serve a compiled, styled HTML copy of the workspace document."""
+    md_path = paths.workspace_md_path(source)
+    try:
+        md_path.resolve().relative_to(paths.WORKSPACE_MD_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+    if not md_path.exists():
+        return JSONResponse({"error": "Document not found."}, status_code=404)
+
+    text = md_path.read_text(encoding="utf-8")
+    import markdown as md_lib
+    html_body = md_lib.markdown(
+        text,
+        extensions=["tables", "fenced_code", "toc", "sane_lists", "nl2br"],
+    )
+
+    css_path = Path(__file__).resolve().parent / "services" / "templates" / "pdf_style.css"
+    css = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
+
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{source}</title>
+    <style>
+        body {{ max-width: 800px; margin: 40px auto; padding: 0 20px; }}
+        {css}
+    </style>
+</head>
+<body>
+    {html_body}
+</body>
+</html>"""
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content=full_html,
+        headers={
+            "Content-Disposition": f"attachment; filename={Path(source).stem}.html"
+        }
+    )
+
+
 @app.get("/originals/file/{source:path}")
 async def download_original(source: str):
     """Serve the original uploaded PDF/DOCX for a source ("<stem>.md")."""
@@ -699,6 +762,29 @@ async def save_document(source: str, body: SaveDocumentRequest, request: Request
     }
 
 
+@app.post("/documents/{source:path}/save-draft")
+async def save_document_draft(source: str, body: SaveDocumentRequest, request: Request):
+    """Fast, cheap autosave — write the workspace markdown only.
+
+    No re-index / PDF / DOCX / git commit. Used by the studio's per-keystroke
+    debounce so active editing stays responsive; the heavier ``/save`` runs on
+    idle/blur and before export. Returns quickly.
+    """
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "Login required to save changes."}, status_code=401)
+
+    md_path = paths.workspace_md_path(source)
+    try:
+        md_path.resolve().relative_to(paths.WORKSPACE_MD_DIR.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+
+    paths.ensure_dirs()
+    await asyncio.to_thread(md_path.write_text, body.markdown, "utf-8")
+    return {"ok": True, "source": source, "draft": True}
+
+
 class EditChatRequest(BaseModel):
     query: str
     current_markdown: str
@@ -723,6 +809,450 @@ async def edit_document_chat(source: str, body: EditChatRequest, request: Reques
         "before": body.current_markdown,
         "after": updated_md
     }
+
+
+# ── Report studio: create + asset endpoints ────────────────────────────────────
+
+class CreateReportRequest(BaseModel):
+    title: str
+    template: str = "blank"
+
+
+@app.post("/documents/create")
+async def create_report(body: CreateReportRequest, request: Request):
+    """Create a new blank/template report as a workspace Markdown source.
+
+    Seeds the source with a template skeleton, indexes it, renders PDF/DOCX, and
+    commits — so it behaves exactly like an uploaded document from then on.
+    """
+    auth = authenticate_request(request)
+    if not auth.allowed:
+        return JSONResponse({"error": auth.error}, status_code=401)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
+
+    from RAG.services import report_templates
+
+    title = (body.title or "").strip()
+    if not title:
+        return JSONResponse({"error": "A report title is required."}, status_code=400)
+
+    paths.ensure_dirs()
+
+    # Derive a unique <stem>.md that doesn't clash with an existing workspace doc.
+    base_stem = paths.sanitize_stem(title)
+    stem = base_stem
+    n = 2
+    while paths.workspace_md_path(paths.source_for(stem)).exists():
+        stem = f"{base_stem}-{n}"
+        n += 1
+    source = paths.source_for(stem)
+    markdown = report_templates.render(body.template, title)
+
+    def _create_and_index():
+        paths.workspace_md_path(source).write_text(markdown, encoding="utf-8")
+
+        from RAG.services.document_manager import reindex_workspace_source
+        reindex_workspace_source(source)
+
+        from RAG.agents.editor import _render_pdf_safe
+        _render_pdf_safe(source)
+        try:
+            from RAG.services.docx_exporter import render as render_docx
+            render_docx(source)
+        except Exception as exc:
+            print(f"[app] DOCX generation failed for new report {source}: {exc}")
+
+        from RAG.services.version_control import commit_change
+        return commit_change(source, "create report")
+
+    try:
+        git_sha = await asyncio.to_thread(_create_and_index)
+    except Exception as exc:
+        return JSONResponse({"error": f"Report creation failed: {exc}"}, status_code=500)
+
+    from RAG.services import report_registry
+    report_registry.record(source, title, body.template)
+
+    return {"ok": True, "source": source, "markdown": markdown, "git_sha": git_sha}
+
+
+class GenerateReportRequest(BaseModel):
+    title: str
+    topic: str
+    template: str = "business-report"
+
+
+@app.post("/documents/generate")
+async def generate_report(body: GenerateReportRequest, request: Request):
+    """Generate a new report section-by-section using the document store and stream SSE progress."""
+    auth = authenticate_request(request)
+    if not auth.allowed:
+        return JSONResponse({"error": auth.error}, status_code=401)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
+
+    title = (body.title or "").strip()
+    topic = (body.topic or "").strip()
+    template = (body.template or "business-report").strip()
+
+    if not title:
+        return JSONResponse({"error": "A report title is required."}, status_code=400)
+    if not topic:
+        return JSONResponse({"error": "A report topic/instruction is required."}, status_code=400)
+
+    async def event_generator():
+        from RAG.agents.supervisor import get_llm
+        from RAG.services.retrieval import retrieve_context_async
+        from langchain_core.messages import SystemMessage
+
+        llm = get_llm()
+        trace_id = new_trace_id()
+
+        try:
+            # 1. Outline Planning
+            yield {
+                "event": "status",
+                "data": json.dumps({"message": "Planning report outline..."}, ensure_ascii=False),
+            }
+
+            outline_prompt = f"""You are a professional report planner. Plan the outline for a report titled "{title}" on the topic: "{topic}".
+The report template chosen is "{template}".
+Based on this template, generate a list of section objects in JSON format.
+Each object must have "title" (the section heading) and "description" (a brief guide of what to write about, referencing specific aspects of the topic).
+
+Standard templates and their required sections:
+- business-report: Executive Summary, Background, Analysis, Key Metrics, Recommendations, Conclusion
+- research-summary: Abstract, Question, Findings, Discussion, References
+- project-status: Status Overview, Progress This Period, Upcoming, Risks & Blockers, Metrics
+- blank: Create 4-6 logical, well-structured sections appropriate for the topic.
+
+Return ONLY a valid JSON array of objects, containing no markdown code fences, no introductory or concluding text.
+Example:
+[
+  {{"title": "Section Title 1", "description": "What to write..."}},
+  {{"title": "Section Title 2", "description": "What to write..."}}
+]
+"""
+            response = await llm.ainvoke([SystemMessage(content=outline_prompt)])
+            content = response.content.strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```(?:json)?\n", "", content)
+                content = re.sub(r"\n```$", "", content)
+            
+            try:
+                sections = json.loads(content.strip())
+            except Exception:
+                if template == "research-summary":
+                    sections = [
+                        {"title": "Abstract", "description": "Summary of research question and findings"},
+                        {"title": "Question", "description": "Core research question"},
+                        {"title": "Findings", "description": "Key findings and cited evidence"},
+                        {"title": "Discussion", "description": "Discussion and limitations"},
+                        {"title": "References", "description": "Sources used"}
+                    ]
+                elif template == "project-status":
+                    sections = [
+                        {"title": "Status Overview", "description": "Overall status summary"},
+                        {"title": "Progress This Period", "description": "Achievements in this period"},
+                        {"title": "Upcoming", "description": "Next steps planned"},
+                        {"title": "Risks & Blockers", "description": "Risks, blockers and mitigations"},
+                        {"title": "Metrics", "description": "Performance metrics"}
+                    ]
+                else:
+                    sections = [
+                        {"title": "Executive Summary", "description": "High-level summary of findings"},
+                        {"title": "Background", "description": "Context and goals"},
+                        {"title": "Analysis", "description": "Detailed analysis of topic"},
+                        {"title": "Key Metrics", "description": "Key metrics table"},
+                        {"title": "Recommendations", "description": "Actionable recommendations"},
+                        {"title": "Conclusion", "description": "Summary and close"}
+                    ]
+
+            yield {
+                "event": "status",
+                "data": json.dumps({"message": f"Outline created with {len(sections)} sections."}, ensure_ascii=False),
+            }
+
+            section_contents = []
+            for idx, sec in enumerate(sections):
+                sec_title = sec.get("title", f"Section {idx+1}")
+                sec_desc = sec.get("description", "")
+
+                yield {
+                    "event": "status",
+                    "data": json.dumps({"message": f"Writing section: {sec_title}..."}, ensure_ascii=False),
+                }
+                yield {
+                    "event": "section_start",
+                    "data": json.dumps({"title": sec_title}, ensure_ascii=False),
+                }
+
+                query = f"{title} {sec_title} {sec_desc}".strip()
+                context, metadata = await retrieve_context_async(query, top_k=5)
+
+                writer_prompt = f"""You are a professional technical writer generating a specific section of a comprehensive report.
+Prepare an accurate, detailed, and professional markdown text for the section based ONLY on the provided research context and topic guidelines.
+
+Topic Guidelines: {topic}
+Section Title: {sec_title}
+Section Description: {sec_desc}
+
+Research Context:
+{context}
+
+Hard Rules:
+1. Respond in the same language as the topic guidelines (Turkish or English).
+2. Base your section writing only on the provided research context. If the context does not contain enough info, write the section to the best of your ability using topic instructions, but clearly state what is verified.
+3. Cite supporting context by converting the citation index to a markdown link with the document's filename and the exact short matching phrase. Format: `[N](cite://filename.pdf?snippet=Exact+Cited+Phrase+Here)`. Replace all spaces in the snippet query with '+' signs. Do not use any other link scheme.
+Example citation: If document "annual_report.pdf" states "revenue grew by 15% in 2023" and you write that, cite it as `[1](cite://annual_report.pdf?snippet=revenue+grew+by+15%+in+2023)`.
+4. Write only the section content (do NOT output the main document title, only start with the section heading e.g. `## Section Title`).
+5. Output raw markdown. No markdown code blocks wrapping the entire response.
+"""
+                section_markdown = ""
+                async for chunk in llm.astream([SystemMessage(content=writer_prompt)]):
+                    if chunk.content:
+                        section_markdown += chunk.content
+                        yield {
+                            "event": "token",
+                            "data": chunk.content,
+                        }
+
+                section_contents.append(section_markdown.strip())
+                yield {
+                    "event": "section_complete",
+                    "data": json.dumps({"title": sec_title, "markdown": section_markdown}, ensure_ascii=False),
+                }
+
+            yield {
+                "event": "status",
+                "data": json.dumps({"message": "Compiling final document..."}, ensure_ascii=False),
+            }
+
+            full_markdown = f"# {title}\n\n" + "\n\n".join(section_contents)
+            source = _unique_workspace_source(title)
+            
+            def _save_and_index():
+                paths.workspace_md_path(source).write_text(full_markdown, encoding="utf-8")
+                return _index_and_export_workspace(source, "generate report")
+
+            git_sha = await asyncio.to_thread(_save_and_index)
+            
+            from RAG.services import report_registry
+            report_registry.record(source, title, template, generated=True)
+
+            yield {
+                "event": "complete",
+                "data": json.dumps({"source": source, "markdown": full_markdown, "git_sha": git_sha}, ensure_ascii=False),
+            }
+            yield {"event": "done", "data": "[DONE]"}
+
+        except Exception as e:
+            print(f"Report Generation Error: {e}")
+            import traceback
+            traceback.print_exc()
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}, ensure_ascii=False),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+def _unique_workspace_source(title: str) -> str:
+    """Slugify `title` into a `<stem>.md` that doesn't collide with an existing
+    workspace document (suffixing -2, -3, … on conflict)."""
+    base_stem = paths.sanitize_stem(title)
+    stem = base_stem
+    n = 2
+    while paths.workspace_md_path(paths.source_for(stem)).exists():
+        stem = f"{base_stem}-{n}"
+        n += 1
+    return paths.source_for(stem)
+
+
+def _index_and_export_workspace(source: str, commit_msg: str) -> str:
+    """Reindex a workspace source, regenerate PDF/DOCX (best-effort), commit."""
+    from RAG.services.document_manager import reindex_workspace_source
+    from RAG.agents.editor import _render_pdf_safe
+    from RAG.services.version_control import commit_change
+
+    reindex_workspace_source(source)
+    _render_pdf_safe(source)
+    try:
+        from RAG.services.docx_exporter import render as render_docx
+        render_docx(source)
+    except Exception as exc:
+        print(f"[app] DOCX generation failed for {source}: {exc}")
+    return commit_change(source, commit_msg)
+
+
+class RenameReportRequest(BaseModel):
+    title: str
+
+
+@app.post("/documents/{source:path}/duplicate")
+async def duplicate_report(source: str, request: Request):
+    """Copy a workspace report (markdown + figures) to a new titled source."""
+    auth = authenticate_request(request)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
+
+    import shutil
+    from RAG.services import report_registry
+
+    src_md = paths.workspace_md_path(source)
+    if not src_md.exists():
+        return JSONResponse({"error": "Document not found."}, status_code=404)
+
+    meta = report_registry.get(source) or {}
+    old_title = meta.get("title") or paths.stem_of(source)
+    new_title = f"{old_title} copy"
+    new_source = _unique_workspace_source(new_title)
+
+    def _do():
+        paths.ensure_dirs()
+        paths.workspace_md_path(new_source).write_text(src_md.read_text(encoding="utf-8"), encoding="utf-8")
+        old_imgs = paths.workspace_images_dir(source)
+        if old_imgs.exists():
+            shutil.copytree(old_imgs, paths.workspace_images_dir(new_source), dirs_exist_ok=True)
+        return _index_and_export_workspace(new_source, "duplicate report")
+
+    try:
+        git_sha = await asyncio.to_thread(_do)
+    except Exception as exc:
+        return JSONResponse({"error": f"Duplicate failed: {exc}"}, status_code=500)
+
+    report_registry.record(new_source, new_title, meta.get("template", "blank"),
+                           generated=meta.get("generated", False))
+    return {"ok": True, "source": new_source, "git_sha": git_sha}
+
+
+@app.post("/documents/{source:path}/rename")
+async def rename_report(source: str, body: RenameReportRequest, request: Request):
+    """Rename a workspace report: copy to a new titled source, delete the old."""
+    auth = authenticate_request(request)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
+
+    import shutil
+    from RAG.services import report_registry
+    from RAG.services.document_manager import delete_document_by_source
+
+    title = (body.title or "").strip()
+    if not title:
+        return JSONResponse({"error": "A title is required."}, status_code=400)
+
+    src_md = paths.workspace_md_path(source)
+    if not src_md.exists():
+        return JSONResponse({"error": "Document not found."}, status_code=404)
+
+    meta = report_registry.get(source) or {}
+    new_source = _unique_workspace_source(title)
+
+    def _do():
+        paths.ensure_dirs()
+        paths.workspace_md_path(new_source).write_text(src_md.read_text(encoding="utf-8"), encoding="utf-8")
+        old_imgs = paths.workspace_images_dir(source)
+        if old_imgs.exists():
+            shutil.copytree(old_imgs, paths.workspace_images_dir(new_source), dirs_exist_ok=True)
+        git_sha = _index_and_export_workspace(new_source, f"rename report → {title}")
+        # Remove the old source everywhere (index + on-disk artifacts).
+        delete_document_by_source(source)
+        return git_sha
+
+    try:
+        git_sha = await asyncio.to_thread(_do)
+    except Exception as exc:
+        return JSONResponse({"error": f"Rename failed: {exc}"}, status_code=500)
+
+    report_registry.rename(source, new_source, title=title)
+    return {"ok": True, "source": new_source, "git_sha": git_sha}
+
+
+class ReportImageRequest(BaseModel):
+    data_url: str
+    name: str | None = None
+
+
+@app.post("/documents/{source:path}/images")
+async def upload_report_image(source: str, body: ReportImageRequest, request: Request):
+    """Persist a PNG (chart canvas or a dragged figure) into a report's workspace
+    image folder and return its same-origin URL for inline Markdown embedding."""
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "Authentication required."}, status_code=401)
+
+    import base64
+
+    data_url = body.data_url or ""
+    if "," in data_url and data_url.strip().lower().startswith("data:"):
+        payload = data_url.split(",", 1)[1]
+    else:
+        payload = data_url
+    try:
+        raw = base64.b64decode(payload)
+    except Exception:
+        return JSONResponse({"error": "Invalid image data."}, status_code=400)
+
+    stem = paths.stem_of(source)
+    img_dir = paths.workspace_images_dir(source)
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    name = paths.sanitize_stem(body.name or f"chart_{secrets.token_hex(4)}")
+    if not name.lower().endswith(".png"):
+        name = f"{name}.png"
+
+    # Path-traversal guard: the resolved file must stay inside the image dir.
+    out_path = (img_dir / Path(name).name).resolve()
+    try:
+        out_path.relative_to(img_dir.resolve())
+    except ValueError:
+        return JSONResponse({"error": "Invalid path."}, status_code=400)
+
+    out_path.write_bytes(raw)
+    return {"ok": True, "url": f"/images/workspace/{stem}/{out_path.name}"}
+
+
+@app.get("/library/assets")
+async def library_assets(request: Request):
+    """List reusable figures and parsed tables across the workspace for the
+    report studio's right-hand tools panel."""
+    auth = authenticate_request(request)
+    if not auth.authenticated:
+        return JSONResponse({"error": "Authentication required."}, status_code=401)
+
+    figures: list[dict] = []
+    base = paths.WORKSPACE_IMG_DIR
+    if base.exists():
+        for stem_dir in sorted(base.iterdir()):
+            if not stem_dir.is_dir():
+                continue
+            for img in sorted(stem_dir.iterdir()):
+                if img.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                    figures.append({
+                        "source": paths.source_for(stem_dir.name),
+                        "name": img.name,
+                        "url": f"/images/workspace/{stem_dir.name}/{img.name}",
+                    })
+
+    tables: list[dict] = []
+    try:
+        from RAG.services.table_store import list_all_tables
+
+        for t in list_all_tables():
+            rows = t.get("rows") or []
+            tables.append({
+                "source": t.get("source", ""),
+                "name": t.get("name", ""),
+                "headers": t.get("headers") or [],
+                "rows_preview": rows[:5],
+                "row_count": len(rows),
+            })
+    except Exception as exc:
+        print(f"[app] library_assets: table listing failed: {exc}")
+
+    return {"figures": figures, "tables": tables}
 
 
 # ── Citation → original PDF page + highlight ───────────────────────────────────
@@ -896,7 +1426,21 @@ async def admin_list_documents(request: Request, channel: str = Query(default="w
         return JSONResponse({"error": "Authentication required."}, status_code=401)
     if channel not in ("originals", "workspace"):
         return JSONResponse({"error": "channel must be 'originals' or 'workspace'."}, status_code=400)
-    return {"channel": channel, "documents": list_documents(channel)}
+
+    docs = list_documents(channel)
+    # Annotate workspace docs with report metadata so the studio can group
+    # studio-created "Reports" apart from "Uploaded" documents.
+    if channel == "workspace":
+        from RAG.services import report_registry
+        registry = report_registry.all_reports()
+        for d in docs:
+            meta = registry.get(d["source"])
+            d["kind"] = "report" if meta else "upload"
+            if meta:
+                d["title"] = meta.get("title")
+                d["generated"] = meta.get("generated", False)
+                d["created_at"] = meta.get("created_at")
+    return {"channel": channel, "documents": docs}
 
 
 @app.delete("/admin/documents/{source:path}")
@@ -905,6 +1449,8 @@ async def admin_delete_document(source: str, request: Request):
     if err:
         return err
     result = await asyncio.to_thread(delete_document_by_source, source)
+    from RAG.services import report_registry
+    report_registry.remove(source)
     return result
 
 

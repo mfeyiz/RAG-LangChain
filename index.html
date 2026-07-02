@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
     <header class="top-bar">
@@ -30,7 +31,7 @@
                 <span class="material-symbols-outlined">menu_book</span> Library
             </button>
             <button class="top-tab" id="tabEditor" type="button" data-tab="editor">
-                <span class="material-symbols-outlined">edit_document</span> File Editor
+                <span class="material-symbols-outlined">edit_note</span> Create / Edit
             </button>
         </nav>
 
@@ -234,22 +235,48 @@
         </section>
     </main>
 
-    <!-- ── Editor view (File Editor tab) ────────────────────────── -->
-    <main class="editor-view" id="editorView" hidden>
-        <aside class="library-sidebar">
-            <div class="library-sidebar-head">
-                <h2>Documents</h2>
-                <span class="tag" id="editorCountTag">0</span>
-            </div>
-            <div class="library-list" id="editorFileList">
-                <div class="empty-state">
-                    <span class="material-symbols-outlined">folder_open</span>
-                    <p>No documents yet. Add PDF/DOCX via "Upload document".</p>
+    <!-- ── Create / Edit studio (report generation) ─────────────── -->
+    <main class="editor-view report-studio" id="editorView" hidden>
+        <!-- LEFT: reports list + chat rail -->
+        <aside class="report-chat-rail">
+            <div class="report-docs">
+                <div class="report-docs-head">
+                    <h2>Reports <span class="tag" id="editorCountTag">0</span></h2>
+                    <button class="primary-button report-new-btn" id="newReportBtn" type="button">
+                        <span class="material-symbols-outlined">add</span> New
+                    </button>
                 </div>
+                <div class="library-list report-doc-list" id="editorFileList">
+                    <div class="empty-state">
+                        <span class="material-symbols-outlined">folder_open</span>
+                        <p>No reports yet. Create one with "New" or upload a PDF/DOCX.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="report-chat">
+                <div class="report-chat-head">
+                    <span class="material-symbols-outlined">forum</span> Assistant
+                </div>
+                <div class="report-chat-messages" id="reportChatMessages">
+                    <div class="report-chat-hint">
+                        Ask a question to gather evidence, or start a message with
+                        <code>@update</code> to have the AI edit the open report.
+                    </div>
+                </div>
+                <form class="composer report-chat-composer" id="editorChatForm">
+                    <div class="composer-input-wrap">
+                        <textarea id="editorUserInput" placeholder="Ask, or @update the report…" rows="1"></textarea>
+                    </div>
+                    <button id="editorSendButton" type="submit" aria-label="Send">
+                        <span class="material-symbols-outlined">arrow_upward</span>
+                    </button>
+                </form>
             </div>
         </aside>
 
-        <section class="editor-content">
+        <!-- CENTER: report hero -->
+        <section class="editor-content report-hero">
             <div class="editor-toolbar" id="editorToolbar">
                 <div class="toolbar-group">
                     <button class="ghost-button toolbar-btn" data-cmd="undo" title="Undo" type="button">
@@ -257,6 +284,12 @@
                     </button>
                     <button class="ghost-button toolbar-btn" data-cmd="redo" title="Redo" type="button">
                         <span class="material-symbols-outlined">redo</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-group">
+                    <button class="ghost-button toolbar-btn" id="editorOutlineToggleBtn" title="Toggle document outline" type="button">
+                        <span class="material-symbols-outlined">format_list_bulleted_header</span>
                     </button>
                 </div>
 
@@ -350,13 +383,61 @@
                     </button>
                 </div>
 
+                <div class="toolbar-divider table-tools-divider" hidden></div>
+                <div class="toolbar-group table-tools-group" id="editorTableTools" hidden>
+                    <button class="ghost-button toolbar-btn" id="tableAddRowAbove" title="Add Row Above" type="button">
+                        <span class="material-symbols-outlined">table_rows</span><span style="font-size:9px;margin-left:1px;font-weight:700;">+A</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" id="tableAddRowBelow" title="Add Row Below" type="button">
+                        <span class="material-symbols-outlined">table_rows</span><span style="font-size:9px;margin-left:1px;font-weight:700;">+B</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" id="tableDeleteRow" title="Delete Row" type="button">
+                        <span class="material-symbols-outlined">table_rows</span><span style="font-size:9px;margin-left:1px;font-weight:700;color:var(--danger);">-</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" id="tableAddColLeft" title="Add Column Left" type="button">
+                        <span class="material-symbols-outlined">view_week</span><span style="font-size:9px;margin-left:1px;font-weight:700;">+L</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" id="tableAddColRight" title="Add Column Right" type="button">
+                        <span class="material-symbols-outlined">view_week</span><span style="font-size:9px;margin-left:1px;font-weight:700;">+R</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn" id="tableDeleteCol" title="Delete Column" type="button">
+                        <span class="material-symbols-outlined">view_week</span><span style="font-size:9px;margin-left:1px;font-weight:700;color:var(--danger);">-</span>
+                    </button>
+                </div>
+
                 <div class="toolbar-group sa-right" style="margin-left: auto;">
+                    <button class="ghost-button toolbar-btn" id="editorHistoryBtn" title="Version history" type="button" disabled>
+                        <span class="material-symbols-outlined">history</span>
+                    </button>
+                    <button class="ghost-button toolbar-btn-download" id="editorDownloadPdf" title="Download as PDF" type="button" disabled>
+                        <span class="material-symbols-outlined">picture_as_pdf</span> PDF
+                    </button>
                     <button class="primary-button toolbar-btn-download" id="editorDownloadDocx" title="Download as Word file" type="button" disabled>
-                        <span class="material-symbols-outlined">download</span> Download (.docx)
+                        <span class="material-symbols-outlined">download</span> Word
+                    </button>
+                    <button class="ghost-button toolbar-btn-download" id="editorDownloadMd" title="Download as Markdown" type="button" disabled>
+                        <span class="material-symbols-outlined">description</span> MD
+                    </button>
+                    <button class="ghost-button toolbar-btn-download" id="editorDownloadHtml" title="Download as HTML" type="button" disabled>
+                        <span class="material-symbols-outlined">code</span> HTML
+                    </button>
+                    <button class="ghost-button toolbar-btn" id="reportToolsToggleBtn" title="Toggle tools panel" type="button">
+                        <span class="material-symbols-outlined">tune</span>
                     </button>
                 </div>
             </div>
             <div class="editor-body">
+                <!-- Left Outline Sidebar -->
+                <aside class="editor-outline-panel" id="editorOutlinePanel" hidden>
+                    <div class="outline-head">
+                        <h3>Outline</h3>
+                        <button type="button" class="ghost-button" id="insertTOCBtn" title="Insert Table of Contents">
+                            <span class="material-symbols-outlined">toc</span> TOC
+                        </button>
+                    </div>
+                    <div class="outline-list" id="outlineList"></div>
+                </aside>
+
                 <div class="editor-page-wrapper">
                     <div class="editor-page" id="editorPage" contenteditable="true" placeholder="Loading content or empty…" hidden></div>
                 </div>
@@ -368,17 +449,171 @@
                     <span class="status-text">Saved</span>
                 </span>
             </div>
-
-            <form class="composer editor-chat-composer" id="editorChatForm">
-                <div class="composer-input-wrap">
-                    <textarea id="editorUserInput" placeholder="Tell the AI what else to change… (e.g. start with @update)" rows="1"></textarea>
-                </div>
-                <button id="editorSendButton" type="submit" aria-label="Send">
-                    <span class="material-symbols-outlined">arrow_upward</span>
-                </button>
-            </form>
         </section>
+
+        <!-- RIGHT: tools panel -->
+        <aside class="report-tools" id="reportTools">
+            <div class="report-tools-head">
+                <h2>Tools</h2>
+                <span class="report-tools-sub">Drag into the report</span>
+            </div>
+
+            <details class="tool-section" open>
+                <summary><span class="material-symbols-outlined">dashboard_customize</span> Content blocks</summary>
+                <div class="block-grid" id="blockGrid">
+                    <button class="block-item" draggable="true" data-block="h1" type="button"><span class="material-symbols-outlined">title</span>Heading 1</button>
+                    <button class="block-item" draggable="true" data-block="h2" type="button"><span class="material-symbols-outlined">title</span>Heading 2</button>
+                    <button class="block-item" draggable="true" data-block="h3" type="button"><span class="material-symbols-outlined">title</span>Heading 3</button>
+                    <button class="block-item" draggable="true" data-block="p" type="button"><span class="material-symbols-outlined">notes</span>Paragraph</button>
+                    <button class="block-item" draggable="true" data-block="ul" type="button"><span class="material-symbols-outlined">format_list_bulleted</span>Bullet list</button>
+                    <button class="block-item" draggable="true" data-block="ol" type="button"><span class="material-symbols-outlined">format_list_numbered</span>Numbered</button>
+                    <button class="block-item" draggable="true" data-block="quote" type="button"><span class="material-symbols-outlined">format_quote</span>Quote</button>
+                    <button class="block-item" draggable="true" data-block="table" type="button"><span class="material-symbols-outlined">table</span>Table</button>
+                    <button class="block-item" draggable="true" data-block="kpi" type="button"><span class="material-symbols-outlined">insights</span>KPI card</button>
+                    <button class="block-item" draggable="true" data-block="divider" type="button"><span class="material-symbols-outlined">horizontal_rule</span>Divider</button>
+                    <button class="block-item" draggable="true" data-block="pagebreak" type="button"><span class="material-symbols-outlined">insert_page_break</span>Page break</button>
+                </div>
+            </details>
+
+            <details class="tool-section" open>
+                <summary><span class="material-symbols-outlined">insert_chart</span> Charts</summary>
+                <div class="chart-builder" id="chartBuilder">
+                    <label class="cb-field">
+                        <span>Type</span>
+                        <select id="chartType">
+                            <option value="bar">Bar</option>
+                            <option value="line">Line</option>
+                            <option value="pie">Pie</option>
+                            <option value="doughnut">Doughnut</option>
+                            <option value="radar">Radar</option>
+                        </select>
+                    </label>
+                    <label class="cb-field">
+                        <span>Title</span>
+                        <input type="text" id="chartTitle" placeholder="Chart title">
+                    </label>
+                    <label class="cb-field">
+                        <span>From table</span>
+                        <select id="chartTableSelect"><option value="">— manual entry —</option></select>
+                    </label>
+                    <label class="cb-field cb-field-col">
+                        <span>Data (label, value per line)</span>
+                        <textarea id="chartData" rows="5" placeholder="Q1, 120&#10;Q2, 180&#10;Q3, 150&#10;Q4, 210"></textarea>
+                    </label>
+                    <div class="chart-preview-wrap"><canvas id="chartPreview"></canvas></div>
+                    <div class="cb-actions">
+                        <button class="primary-button" id="chartInsertBtn" type="button"><span class="material-symbols-outlined">add_chart</span> Insert chart</button>
+                        <button class="ghost-button" id="chartAiBtn" type="button" title="Ask the AI to build a chart from a document table"><span class="material-symbols-outlined">auto_awesome</span> Ask AI</button>
+                    </div>
+                </div>
+            </details>
+
+            <details class="tool-section">
+                <summary><span class="material-symbols-outlined">format_quote</span> Evidence <span class="tool-count" id="evidenceCount"></span></summary>
+                <div class="evidence-list" id="evidenceList">
+                    <div class="empty-state small"><p>Ask a question in the chat — answers and sources land here to drag in.</p></div>
+                </div>
+            </details>
+
+            <details class="tool-section">
+                <summary><span class="material-symbols-outlined">collections</span> Figures &amp; tables</summary>
+                <div class="asset-groups" id="libraryAssets">
+                    <div class="empty-state small"><p>Loading library assets…</p></div>
+                </div>
+            </details>
+        </aside>
     </main>
+
+    <!-- ── New report modal ─────────────────────────────────────── -->
+    <div id="newReportModal" class="modal-overlay" hidden>
+        <div class="modal-box">
+            <div class="modal-header">
+                <h2>New report</h2>
+                <button class="modal-close" id="newReportClose" type="button" aria-label="Close">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <div class="modal-body new-report-body">
+                <label class="cb-field cb-field-col">
+                    <span>Title</span>
+                    <input type="text" id="newReportTitle" placeholder="e.g. Q3 Business Review">
+                </label>
+                <p class="modal-sublabel">Template</p>
+                <div class="template-grid" id="templateGrid">
+                    <button class="template-card is-active" data-template="blank" type="button">
+                        <span class="material-symbols-outlined">draft</span>
+                        <span class="template-name">Blank</span>
+                        <span class="template-desc">Start from an empty page</span>
+                    </button>
+                    <button class="template-card" data-template="business-report" type="button">
+                        <span class="material-symbols-outlined">monitoring</span>
+                        <span class="template-name">Business report</span>
+                        <span class="template-desc">Summary, analysis, metrics</span>
+                    </button>
+                    <button class="template-card" data-template="research-summary" type="button">
+                        <span class="material-symbols-outlined">science</span>
+                        <span class="template-name">Research summary</span>
+                        <span class="template-desc">Abstract, findings, refs</span>
+                    </button>
+                    <button class="template-card" data-template="project-status" type="button">
+                        <span class="material-symbols-outlined">flag</span>
+                        <span class="template-name">Project status</span>
+                        <span class="template-desc">Status, risks, metrics</span>
+                    </button>
+                </div>
+
+                <div class="ai-gen-toggle-wrap">
+                    <label class="ai-gen-toggle-label">
+                        <input type="checkbox" id="newReportUseAI">
+                        <span>AI ile Rapor Üret (Generate with AI)</span>
+                    </label>
+                </div>
+
+                <div class="ai-gen-prompt-wrap" id="aiGenPromptWrap" hidden>
+                    <label class="cb-field cb-field-col">
+                        <span>Topic / Instructions</span>
+                        <textarea id="newReportAIPrompt" rows="3" placeholder="Describe the topics this report should cover. The AI will retrieve facts from your uploaded documents to draft the content."></textarea>
+                    </label>
+                </div>
+
+                <div class="ai-gen-status-wrap" id="aiGenStatusWrap" hidden>
+                    <div class="ai-gen-status-header">
+                        <div class="ai-gen-spinner"></div>
+                        <span class="ai-gen-status-text" id="aiGenStatusText">Planning outline...</span>
+                    </div>
+                    <div class="ai-gen-progress-bar">
+                        <div class="ai-gen-progress-fill" id="aiGenProgressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="ai-gen-logs" id="aiGenLogs"></div>
+                </div>
+
+                <div class="modal-actions" id="newReportActions">
+                    <button class="primary-button" id="newReportCreate" type="button">
+                        <span class="material-symbols-outlined">note_add</span> Create report
+                    </button>
+                </div>
+                <p class="new-report-status" id="newReportStatus" hidden></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Version history modal ────────────────────────────────── -->
+    <div id="historyModal" class="modal-overlay" hidden>
+        <div class="modal-box">
+            <div class="modal-header">
+                <h2>Version history</h2>
+                <button class="modal-close" id="historyClose" type="button" aria-label="Close">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="history-sub" id="historySub"></p>
+                <div class="history-list" id="historyList">
+                    <div class="empty-state small"><p>Loading history…</p></div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ── Upload modal ─────────────────────────────────────────── -->
     <div id="uploadModal" class="modal-overlay" hidden>
@@ -435,6 +670,90 @@
                 <button type="submit" class="primary-button" id="authSubmit">Log in</button>
             </form>
         </div>
+    </div>
+
+    <!-- ── Floating selection toolbar ───────────────────────────────── -->
+    <div id="editorSelectionToolbar" class="selection-toolbar" hidden>
+        <button type="button" class="st-btn" data-action="improve" title="Yazımı iyileştir">
+            <span class="material-symbols-outlined">auto_awesome</span><span>İyileştir</span>
+        </button>
+        <button type="button" class="st-btn" data-action="shorten" title="Kısalt">
+            <span class="material-symbols-outlined">compress</span><span>Kısalt</span>
+        </button>
+        <button type="button" class="st-btn" data-action="expand" title="Uzat">
+            <span class="material-symbols-outlined">expand</span><span>Uzat</span>
+        </button>
+        <button type="button" class="st-btn" data-action="table" title="Tabloya Dönüştür">
+            <span class="material-symbols-outlined">table_chart</span><span>Tablo Yap</span>
+        </button>
+        <div class="st-divider"></div>
+        <div class="st-prompt-wrap">
+            <input type="text" id="stCustomPrompt" placeholder="Ask AI to edit selection...">
+            <button type="button" class="st-send" id="stCustomSend" title="Gönder">
+                <span class="material-symbols-outlined">arrow_forward</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Floating Slash Command Menu ─────────────────────────────── -->
+    <div id="editorSlashMenu" class="slash-menu" hidden>
+        <div class="slash-menu-title">Insert Block</div>
+        <button type="button" class="sm-item is-active" data-command="h1">
+            <span class="material-symbols-outlined">title</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Heading 1</span>
+                <span class="sm-item-desc">Large section heading</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="h2">
+            <span class="material-symbols-outlined">format_size</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Heading 2</span>
+                <span class="sm-item-desc">Medium subsection heading</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="h3">
+            <span class="material-symbols-outlined">text_fields</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Heading 3</span>
+                <span class="sm-item-desc">Small sub-subsection heading</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="bullet">
+            <span class="material-symbols-outlined">format_list_bulleted</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Bullet List</span>
+                <span class="sm-item-desc">Create a simple bulleted list</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="number">
+            <span class="material-symbols-outlined">format_list_numbered</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Numbered List</span>
+                <span class="sm-item-desc">Create a sequential list</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="table">
+            <span class="material-symbols-outlined">table</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Table</span>
+                <span class="sm-item-desc">Insert a simple data table</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="kpi">
+            <span class="material-symbols-outlined">analytics</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">KPI Card</span>
+                <span class="sm-item-desc">Highlighted metrics block</span>
+            </div>
+        </button>
+        <button type="button" class="sm-item" data-command="break">
+            <span class="material-symbols-outlined">output_doc</span>
+            <div class="sm-item-meta">
+                <span class="sm-item-name">Page Break</span>
+                <span class="sm-item-desc">Force page break in PDF/DOCX</span>
+            </div>
+        </button>
     </div>
 
     <script src="script.js"></script>

@@ -52,7 +52,9 @@ pre code { background: none; padding: 0; }
 
 table {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     margin: 0.9em 0;
     font-size: 0.95em;
     page-break-inside: avoid;
@@ -62,6 +64,8 @@ th, td {
     padding: 0.45em 0.6em;
     text-align: left;
     vertical-align: top;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
 }
 thead th {
     background: #14213d;
@@ -70,6 +74,106 @@ thead th {
 }
 tbody tr:nth-child(even) { background: #f5f6f8; }
 
-img { max-width: 100%; }
+/* Images (charts/figures) flow with the text at a readable size, centered —
+   never the full page width. */
+img {
+    max-width: 62%;
+    height: auto;
+    display: block;
+    margin: 0.9em auto;
+}
 
 hr { border: none; border-top: 1px solid #c9ced6; margin: 1.2em 0; }
+
+/* Custom elements & page breaks */
+.page-break {
+    page-break-after: always;
+    break-after: page;
+}
+
+.kpi-card {
+    display: inline-block;
+    min-width: 140px;
+    padding: 12px 16px;
+    margin: 6px 8px 6px 0;
+    border: 1px solid #14213d;
+    border-radius: 8px;
+    background: #f0f4ff;
+}
+.kpi-card .kpi-value {
+    font-size: 20pt;
+    font-weight: bold;
+    color: #14213d;
+    margin: 0;
+    line-height: 1.1;
+}
+.kpi-card .kpi-label {
+    font-size: 9pt;
+    color: #666;
+    margin-top: 4px;
+}
+
+.report-chart-container {
+    text-align: center;
+    margin: 1.2em 0;
+}
+.report-chart-container img {
+    max-width: 75%;
+}
+
+.table-of-contents {
+    border: 1px solid #c9ced6;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 1.2em 0;
+    background: #f7f8fa;
+    page-break-inside: avoid;
+}
+.table-of-contents h4 {
+    margin: 0 0 10px 0;
+    font-size: 13pt;
+    color: #14213d;
+    border: none;
+    padding: 0;
+}
+.table-of-contents ul {
+    list-style-type: none;
+    padding-left: 0;
+    margin: 0;
+}
+.table-of-contents li {
+    margin-bottom: 6px;
+}
+.table-of-contents a {
+    color: #1d4ed8;
+    text-decoration: none;
+    font-size: 10pt;
+}
+
+/* Cover page styling */
+.cover-page {
+    page-break-after: always;
+    break-after: page;
+    text-align: center;
+    padding-top: 4cm;
+    height: 100%;
+    box-sizing: border-box;
+}
+.cover-title {
+    font-size: 28pt;
+    font-weight: bold;
+    color: #14213d;
+    margin-bottom: 12px;
+    line-height: 1.2;
+}
+.cover-subtitle {
+    font-size: 16pt;
+    color: #555;
+    margin-bottom: 4cm;
+    font-style: italic;
+}
+.cover-meta {
+    font-size: 11pt;
+    color: #666;
+    line-height: 1.6;
+}
