@@ -1045,77 +1045,157 @@ Example:
                 "data": json.dumps({"message": f"Outline created with {len(sections)} sections."}, ensure_ascii=False),
             }
 
-            section_contents = []
-            for idx, sec in enumerate(sections):
-                sec_title = sec.get("title", f"Section {idx+1}")
-                sec_desc = sec.get("description", "")
+            # Reserve the report source now so charts can be written into its
+            # image folder as we generate.
+            source = _unique_workspace_source(title)
+            stem = paths.stem_of(source)
+            from RAG.services import report_charts, report_registry
+            from RAG.services.web_search import web_search, web_search_available
 
+            # One web search for the whole topic (results are reused per section).
+            web_context, web_sources = "", []
+            if web_search_available():
                 yield {
                     "event": "status",
-                    "data": json.dumps({"message": f"Writing section: {sec_title}..."}, ensure_ascii=False),
+                    "data": json.dumps({"message": "Searching the web…"}, ensure_ascii=False),
                 }
-                yield {
-                    "event": "section_start",
-                    "data": json.dumps({"title": sec_title}, ensure_ascii=False),
-                }
+                try:
+                    web = await asyncio.to_thread(web_search, f"{title} {topic}")
+                    web_context = (web.get("context", "") or "")[:3500]
+                    web_sources = web.get("sources", []) or []
+                except Exception as exc:
+                    print(f"[generate] web search failed: {exc}")
 
-                query = f"{title} {sec_title} {sec_desc}".strip()
-                context, metadata = await retrieve_context_async(query, top_k=5)
+            # Cap sections and bound tokens so generation stays fast (~1-2 min) and
+            # never runs away.
+            sections = sections[:6]
+            section_llm = llm.bind(max_tokens=800)
 
-                writer_prompt = f"""You are a professional technical writer generating a specific section of a comprehensive report.
-Prepare an accurate, detailed, and professional markdown text for the section based ONLY on the provided research context and topic guidelines.
+            def _embed_charts(md: str) -> str:
+                """Replace ```chart JSON blocks with rendered PNG image links."""
+                imgdir = paths.workspace_images_dir(source)
 
-Topic Guidelines: {topic}
+                def repl(m):
+                    spec = report_charts.parse_spec(m.group(1))
+                    if not spec:
+                        return ""
+                    name = f"chart_{abs(hash(m.group(1))) % (10 ** 9)}.png"
+                    if report_charts.render_chart_spec(spec, imgdir / name):
+                        alt = str(spec.get("title") or "chart")
+                        return f"![{alt}](/images/workspace/{stem}/{name})"
+                    return ""
+
+                return report_charts.CHART_BLOCK_RE.sub(repl, md)
+
+            # One shared retrieval for the whole topic (avoids 6× reranker latency).
+            yield {
+                "event": "status",
+                "data": json.dumps({"message": "Gathering evidence…"}, ensure_ascii=False),
+            }
+            try:
+                shared_context, _ = await retrieve_context_async(f"{title} {topic}", top_k=6)
+            except Exception:
+                shared_context = ""
+            sources_block = f"\n\nWEB SEARCH RESULTS (from the internet):\n{web_context}" if web_context else ""
+
+            def _section_prompt(sec_title: str, sec_desc: str) -> str:
+                return f"""You are a professional report writer producing ONE section of a report. Write accurate, well-structured, professional markdown.
+
+Topic / Instructions: {topic}
 Section Title: {sec_title}
-Section Description: {sec_desc}
+Section Focus: {sec_desc}
 
-Research Context:
-{context}
+LOCAL DOCUMENT CONTEXT:
+{shared_context or '(no local documents matched — rely on the web results and general knowledge)'}{sources_block}
 
-Hard Rules:
-1. Respond in the same language as the topic guidelines (Turkish or English).
-2. Base your section writing only on the provided research context. If the context does not contain enough info, write the section to the best of your ability using topic instructions, but clearly state what is verified.
-3. Cite supporting context by converting the citation index to a markdown link with the document's filename and the exact short matching phrase. Format: `[N](cite://filename.pdf?snippet=Exact+Cited+Phrase+Here)`. Replace all spaces in the snippet query with '+' signs. Do not use any other link scheme.
-Example citation: If document "annual_report.pdf" states "revenue grew by 15% in 2023" and you write that, cite it as `[1](cite://annual_report.pdf?snippet=revenue+grew+by+15%+in+2023)`.
-4. Write only the section content (do NOT output the main document title, only start with the section heading e.g. `## Section Title`).
-5. Output raw markdown. No markdown code blocks wrapping the entire response.
-"""
-                section_markdown = ""
-                async for chunk in llm.astream([SystemMessage(content=writer_prompt)]):
-                    if chunk.content:
-                        section_markdown += chunk.content
-                        yield {
-                            "event": "token",
-                            "data": chunk.content,
-                        }
+Rules:
+1. Respond in the SAME LANGUAGE as the Topic / Instructions (Turkish or English).
+2. Prefer the provided web results and local context; you may add well-known general knowledge, but do not invent specific statistics.
+3. Start with the section heading, e.g. `## {sec_title}`. Do NOT repeat the report's main title. Keep it focused (2-4 short paragraphs, lists/tables where useful).
+4. When the section presents numeric trends or comparisons AND you have concrete figures, include ONE chart by emitting a fenced code block tagged `chart` with JSON:
+```chart
+{{"type": "bar|line|pie", "title": "…", "labels": ["…", "…"], "values": [12.3, 45.6]}}
+```
+   Put it right after the paragraph discussing those numbers. Only use real numbers; at most one chart per section.
+5. Output raw markdown only (do not wrap the whole answer in a code fence)."""
 
-                section_contents.append(section_markdown.strip())
-                yield {
-                    "event": "section_complete",
-                    "data": json.dumps({"title": sec_title, "markdown": section_markdown}, ensure_ascii=False),
-                }
+            # Write all sections CONCURRENTLY — far faster and more reliable than a
+            # long sequential stream. Bound concurrency to the section count.
+            sem = asyncio.Semaphore(min(len(sections), 6))
+
+            async def _write_section(idx: int, sec: dict) -> tuple[int, str, str]:
+                sec_title = sec.get("title", f"Section {idx+1}")
+                sec_desc = sec.get("description", "")
+                async with sem:
+                    resp = await section_llm.ainvoke([SystemMessage(content=_section_prompt(sec_title, sec_desc))])
+                text = (resp.content or "").strip()
+                if text.startswith("```"):
+                    text = re.sub(r"^```(?:markdown|md)?\n", "", text)
+                    text = re.sub(r"\n```$", "", text)
+                return idx, sec_title, text.strip()
 
             yield {
                 "event": "status",
-                "data": json.dumps({"message": "Compiling final document..."}, ensure_ascii=False),
+                "data": json.dumps({"message": f"Writing {len(sections)} sections in parallel…"}, ensure_ascii=False),
             }
 
-            full_markdown = f"# {title}\n\n" + "\n\n".join(section_contents)
-            source = _unique_workspace_source(title)
-            
-            def _save_and_index():
-                paths.workspace_md_path(source).write_text(full_markdown, encoding="utf-8")
-                return _index_and_export_workspace(source, "generate report")
+            tasks = [asyncio.create_task(_write_section(i, s)) for i, s in enumerate(sections)]
+            results: dict[int, str] = {}
+            done_count = 0
+            for coro in asyncio.as_completed(tasks):
+                idx, sec_title, text = await coro
+                results[idx] = text
+                done_count += 1
+                yield {
+                    "event": "section_complete",
+                    "data": json.dumps({"title": sec_title}, ensure_ascii=False),
+                }
+                yield {
+                    "event": "status",
+                    "data": json.dumps({"message": f"Completed {done_count}/{len(sections)}: {sec_title}"}, ensure_ascii=False),
+                }
 
-            git_sha = await asyncio.to_thread(_save_and_index)
-            
-            from RAG.services import report_registry
+            # Embed charts sequentially (matplotlib/pyplot is not thread-safe).
+            yield {
+                "event": "status",
+                "data": json.dumps({"message": "Rendering charts…"}, ensure_ascii=False),
+            }
+            section_contents = []
+            for i in range(len(sections)):
+                md = results.get(i, "")
+                if "```chart" in md:
+                    md = await asyncio.to_thread(_embed_charts, md)
+                section_contents.append(md)
+
+            # Append a Sources section listing the web references used.
+            if web_sources:
+                lines = ["## Kaynaklar / Sources"]
+                for i, s in enumerate(web_sources, 1):
+                    t = s.get("title") or s.get("url") or f"Source {i}"
+                    u = s.get("url") or ""
+                    lines.append(f"{i}. [{t}]({u})" if u else f"{i}. {t}")
+                section_contents.append("\n".join(lines))
+
+            full_markdown = f"# {title}\n\n" + "\n\n".join(section_contents)
+
+            # Write the markdown FIRST and signal completion so the report is
+            # viewable immediately; the heavier reindex + PDF/DOCX + commit runs
+            # afterwards while the SSE connection stays open.
+            paths.workspace_md_path(source).write_text(full_markdown, encoding="utf-8")
             report_registry.record(source, title, template, generated=True)
 
             yield {
                 "event": "complete",
-                "data": json.dumps({"source": source, "markdown": full_markdown, "git_sha": git_sha}, ensure_ascii=False),
+                "data": json.dumps({"source": source, "markdown": full_markdown}, ensure_ascii=False),
             }
+            yield {
+                "event": "status",
+                "data": json.dumps({"message": "Indexing & exporting…"}, ensure_ascii=False),
+            }
+            try:
+                await asyncio.to_thread(_index_and_export_workspace, source, "generate report")
+            except Exception as exc:
+                print(f"[generate] post-save index/export failed: {exc}")
             yield {"event": "done", "data": "[DONE]"}
 
         except Exception as e:
