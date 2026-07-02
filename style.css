@@ -2631,6 +2631,8 @@ body.cite-open .workspace {
     background: var(--accent-soft);
     border-radius: 999px;
     padding: 3px 10px;
+}
+
 /* AI Generator styling */
 .ai-gen-toggle-wrap {
     margin-top: 12px;
@@ -3028,15 +3030,28 @@ body.cite-open .workspace {
     text-decoration: underline;
 }
 
-@media (max-width: 1180px) {
-    .editor-view { grid-template-columns: 320px minmax(0, 1fr); }
+/* Studio responsive: keep 3 columns while they fit; then turn the tools panel
+   into a slide-in overlay (toggled by the toolbar's tune button) so it can never
+   wrap under the left column. */
+@media (max-width: 1360px) {
+    .editor-view { grid-template-columns: 300px minmax(0, 1fr) 300px; gap: 14px; }
+}
+@media (max-width: 1160px) {
+    .editor-view { grid-template-columns: 300px minmax(0, 1fr) !important; }
     .report-tools {
         position: fixed;
-        top: 76px;
-        right: 12px;
-        bottom: 12px;
+        top: 84px;
+        right: 14px;
+        bottom: 14px;
         width: 320px;
-        z-index: 40;
+        max-width: calc(100vw - 28px);
+        z-index: 60;
+        box-shadow: 0 12px 40px rgba(40, 33, 24, 0.18);
     }
-    .editor-view:not(.report-tools-open) .report-tools { display: none; }
+    .editor-view:not(.report-tools-open) .report-tools { display: none !important; }
+}
+@media (max-width: 760px) {
+    .editor-view { grid-template-columns: 1fr !important; height: auto; }
+    .report-chat-rail { max-height: none; }
+    .report-hero { min-height: 70vh; }
 }
