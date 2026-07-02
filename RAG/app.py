@@ -177,6 +177,42 @@ async def register(body: RegisterRequest, request: Request):
 
 # ── Ask (SSE with token streaming) ───────────────────────────────────────────
 
+# Playful easter egg: a shout-out to whoever worked under Feyiz at SOCRadar.
+# Maps the normalized (Turkish-folded) name to its proper display form.
+_EGG_NAMES = {"erencan": "Erencan", "cagri": "Çağrı", "akin": "Akın"}
+
+
+def _tr_normalize(text: str) -> str:
+    """Lowercase and fold Turkish-specific letters for robust name matching."""
+    table = str.maketrans({
+        "ç": "c", "ğ": "g", "ı": "i", "ş": "s", "ö": "o", "ü": "u", "İ": "i",
+        "Ç": "c", "Ğ": "g", "Ş": "s", "Ö": "o", "Ü": "u",
+    })
+    return (text or "").translate(table).lower()
+
+
+def _socradar_easter_egg(query: str) -> str | None:
+    """Return a personalized shout-out for each mentioned name (singular per
+    person), or None if no tracked name appears in the query."""
+    norm = _tr_normalize(query)
+    found = [display for key, display in _EGG_NAMES.items() if re.search(rf"\b{key}\b", norm)]
+    if not found:
+        return None
+    if len(found) == 1:
+        who = f"**{found[0]}**"
+        return (
+            f"🫡 {who}, SOCRadar'da bizzat **Feyiz'in** altında çalışma onuruna "
+            "erişmiş seçkin bir kişidir. Bu şerefe nail olabilen insan sayısı "
+            "oldukça azdır. 🏆"
+        )
+    who = ", ".join(f"**{n}**" for n in found[:-1]) + f" ve **{found[-1]}**"
+    return (
+        f"🫡 {who}, SOCRadar'da bizzat **Feyiz'in** altında çalışma onuruna "
+        "erişmiş seçkin kişilerdir. Bu şerefe nail olabilen insan sayısı oldukça "
+        "azdır. 🏆"
+    )
+
+
 @app.post("/ask")
 async def handle_query(request: Request):
     auth = authenticate_request(request)
@@ -261,6 +297,13 @@ async def handle_query(request: Request):
                 "event": "session_info",
                 "data": json.dumps({"session_id": session_id, "trace_id": trace_id}, ensure_ascii=False),
             }
+
+            # Easter egg: intercept before the graph runs.
+            egg = _socradar_easter_egg(user_query)
+            if egg:
+                yield {"event": "message", "data": egg}
+                yield {"event": "done", "data": "[DONE]"}
+                return
 
             with start_request_trace(
                 trace_name="rag-ask",
