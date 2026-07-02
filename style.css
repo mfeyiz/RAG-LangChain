@@ -326,6 +326,10 @@ h1, h2 {
 
 .message-content {
     max-width: min(80%, 640px);
+    /* Flex children default to min-width:auto, which lets wide content (e.g. a
+       diff viewer with long unwrapped lines) push the bubble past its max-width
+       and out of the chat column. min-width:0 makes it honour max-width. */
+    min-width: 0;
     padding: 13px 16px;
     border-radius: 14px;
     font-size: 15px;
@@ -1249,6 +1253,11 @@ h1, h2 {
     border-bottom: 1px solid var(--accent-line);
 }
 
+/* The author `display: flex` above has the same specificity as the UA
+   `[hidden] { display: none }` rule, so it would win and keep the banner
+   visible forever once shown. This guard restores hide-on-ready. */
+.status-banner[hidden] { display: none; }
+
 .status-banner-spinner {
     width: 15px;
     height: 15px;
@@ -1443,6 +1452,13 @@ h1, h2 {
     background: var(--bg);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-sm);
+    /* The card is a flex child of .message (beside the avatar). Without these it
+       grows to its widest line and spills out of the chat column; min-width:0
+       lets it shrink and the inner diff (pre-wrap) fits within it. */
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
 }
 .edit-preview-head {
     display: flex; align-items: center; gap: 8px;
@@ -1457,13 +1473,16 @@ h1, h2 {
     font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
     font-size: 12px;
     max-height: 360px; overflow: auto;
+    max-width: 100%;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     background: var(--bg-elev, var(--bg));
 }
 .diff-viewer-line {
     display: flex; align-items: flex-start;
-    white-space: pre; line-height: 1.55;
+    /* Wrap long lines (prose Markdown, base64 image blobs) instead of forcing
+       the viewer — and the whole chat bubble — to grow horizontally. */
+    line-height: 1.55;
 }
 .diff-gutter {
     width: 22px; flex: 0 0 22px;
@@ -1471,8 +1490,15 @@ h1, h2 {
     color: var(--muted);
     border-right: 1px solid var(--line);
     background: var(--bg);
+    position: sticky; left: 0;
 }
-.diff-content { padding: 0 8px; overflow: hidden; }
+.diff-content {
+    padding: 0 8px;
+    min-width: 0; flex: 1 1 auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
 .diff-added   { background: rgba(46,160,67,.12); }
 .diff-added   .diff-gutter { background: rgba(46,160,67,.18); color: #2ea043; }
 .diff-removed { background: rgba(248,81,73,.12); }
@@ -1520,6 +1546,43 @@ h1, h2 {
 .cite-panel-nav button { background: none; border: none; cursor: pointer; padding: 2px; color: var(--muted); display: flex; }
 .cite-panel-nav button:hover { color: var(--accent-hover); }
 .cite-panel-nav .material-symbols-outlined { font-size: 20px; }
+
+/* PDF ⇄ Changes(diff) mode toggle in the citation panel header. */
+.cite-panel-modes { display: flex; gap: 4px; flex: 0 0 auto; }
+.cite-mode-btn {
+    display: flex; align-items: center; gap: 4px;
+    background: transparent; border: 1px solid var(--line); color: #cfd2d6;
+    font-size: 12px; font-family: inherit; padding: 3px 9px;
+    border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.cite-mode-btn .material-symbols-outlined { font-size: 15px; }
+.cite-mode-btn:hover:not(.is-active) { color: #fff; border-color: var(--accent-hover); }
+.cite-mode-btn.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Unified workspace-vs-original Markdown diff shown when the panel is in
+   "Changes" mode. The body centers its children, so full-width blocks stretch. */
+.cite-diff-note {
+    align-self: stretch; padding: 10px 14px; font-size: 12px; color: #cfd2d6;
+    border-bottom: 1px solid var(--line); background: var(--surface);
+}
+.cite-diff-legend { font-weight: 600; margin-left: 4px; }
+.cite-diff-legend.added   { color: #7ee2a8; }
+.cite-diff-legend.removed { color: #ff9c96; }
+.cite-diff {
+    align-self: stretch; width: 100%;
+    padding: 6px 12px 20px;
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px; line-height: 1.6;
+}
+.cite-diff-line {
+    display: flex; gap: 6px;
+    white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    color: #c9ccd1; padding: 0 4px; border-radius: 3px;
+}
+.cite-diff-sign { flex: 0 0 12px; text-align: center; user-select: none; opacity: .6; }
+.cite-diff-line.added   { background: rgba(46, 160, 67, .20); color: #7ee2a8; }
+.cite-diff-line.removed { background: rgba(248, 81, 73, .18); color: #ff9c96; }
+
 .cite-panel-loading { padding: 16px; color: #cfd2d6; font-size: 13px; text-align: center; }
 
 /* Scroll the WHOLE document; each page is centered on the dark backdrop with

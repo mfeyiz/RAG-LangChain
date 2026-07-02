@@ -63,6 +63,38 @@ spec:
               value: "https://opencode.ai/zen/go/v1"
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "/var/secrets/google/google-credentials.json"
+            # Required by RAG/services/embeddings.py, documentai_parser.py, and
+            # the Vertex reranker (retrieval.py) — all read this via a hard
+            # os.environ[...] lookup with no default. Without it, startup
+            # indexing raises KeyError inside the background task, which is
+            # swallowed silently: the pod stays "Running/Ready" (/healthz does
+            # not check this) but /status never leaves phase="indexing" and the
+            # UI is stuck on "Indexing documents, please wait..." forever.
+            - name: GOOGLE_CLOUD_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: GOOGLE_CLOUD_PROJECT
+            # Discovery Engine (Vertex reranker) requires the numeric project
+            # number, not the string project ID.
+            - name: GOOGLE_CLOUD_PROJECT_NUMBER
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: GOOGLE_CLOUD_PROJECT_NUMBER
+                  optional: true
+            # Defaults to "docling" (see converter.py) if unset, which is no
+            # longer a dependency (see pyproject.toml) — uploads would silently
+            # degrade to text-only conversion (no figures/images).
+            - name: DOC_PARSER
+              value: "documentai"
+            - name: DOCAI_LOCATION
+              value: "eu"
+            - name: DOCAI_PROCESSOR_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: DOCAI_PROCESSOR_ID
             - name: RAG_ENABLE_RERANKER
               value: "1"
             - name: LLM_MODEL

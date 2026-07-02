@@ -415,6 +415,40 @@ async def handle_query(request: Request):
 
 # ── Query Suggestions (embedding-based) ──────────────────────────────────────
 
+def _humanize_title(text: str) -> str:
+    """Turn a filename-style title into a readable topic label:
+    'Lec3_Scanning' → 'Lec3 Scanning', 'a-b_c.md' → 'a b c'."""
+    text = re.sub(r"\.(md|pdf|docx?|txt)$", "", (text or "").strip(), flags=re.IGNORECASE)
+    text = text.replace("_", " ").replace("-", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _title_suggestions(q: str, limit: int) -> list[dict]:
+    """Readable topic suggestions whose (humanized) title contains every word the
+    user typed — predictable and relevant for short prefixes like 'scan'."""
+    retriever = get_retriever()
+    words = [w for w in q.lower().split() if w]
+    seen: set[str] = set()
+    results: list[dict] = []
+    for candidate in retriever.corpus:
+        raw = candidate.metadata.get("title", "").strip()
+        if not raw or raw.lower() == "untitled":
+            continue
+        label = _humanize_title(raw)
+        hay = label.lower()
+        if label.lower() in seen or not all(w in hay for w in words):
+            continue
+        seen.add(label.lower())
+        results.append({
+            "text": label,
+            "source": candidate.metadata.get("source", ""),
+            "kind": candidate.metadata.get("kind", ""),
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
 @app.get("/suggestions")
 async def get_suggestions(
     q: str = Query(default="", min_length=1),
@@ -424,56 +458,50 @@ async def get_suggestions(
     if len(q) < 2:
         return {"suggestions": []}
 
-    if vector_store.get_pool() is None:
-        return {"suggestions": _bm25_suggestions(q, limit)}
-
-    try:
-        query_vector = await asyncio.to_thread(_get_embeddings().embed_query, q)
-        rows = await asyncio.to_thread(
-            vector_store.query, COLLECTION_NAME, query_vector, limit * 4
-        )
-    except Exception as exc:
-        print(f"[Suggestions] pgvector search failed: {exc}")
-        return {"suggestions": _bm25_suggestions(q, limit)}
-
     seen: set[str] = set()
     suggestions: list[dict] = []
 
-    for row in rows:
-        metadata = row.get("metadata", {})
-        kind = metadata.get("kind", "")
-        source = metadata.get("source", "unknown")
+    # 1. Direct title/topic matches first — readable and reliably relevant.
+    for item in _title_suggestions(q, limit):
+        key = item["text"].lower()
+        if key not in seen:
+            seen.add(key)
+            suggestions.append(item)
 
-        # Prefer real questions from QA chunks
-        if kind == "qa":
-            text = metadata.get("question", "").strip()
-        else:
-            title = metadata.get("title", "").strip()
-            text = title if title and title.lower() != "untitled" else ""
+    # 2. Fill remaining slots with semantic matches (real questions from QA
+    #    chunks, otherwise the section heading or the humanized document title).
+    if len(suggestions) < limit and vector_store.get_pool() is not None:
+        try:
+            query_vector = await asyncio.to_thread(_get_embeddings().embed_query, q)
+            rows = await asyncio.to_thread(
+                vector_store.query, COLLECTION_NAME, query_vector, limit * 4
+            )
+        except Exception as exc:
+            print(f"[Suggestions] pgvector search failed: {exc}")
+            rows = []
 
-        if text and text not in seen:
-            seen.add(text)
-            suggestions.append({"text": text, "source": source, "kind": kind})
+        for row in rows:
+            metadata = row.get("metadata", {})
+            kind = metadata.get("kind", "")
+            if kind == "qa":
+                text = metadata.get("question", "").strip()
+            else:
+                text = (metadata.get("heading_path", "").strip()
+                        or _humanize_title(metadata.get("title", "")))
+            if not text or text.lower() == "untitled":
+                continue
+            key = text.lower()
+            if key not in seen:
+                seen.add(key)
+                suggestions.append({
+                    "text": text,
+                    "source": metadata.get("source", "unknown"),
+                    "kind": kind,
+                })
             if len(suggestions) >= limit:
                 break
 
-    return {"suggestions": suggestions}
-
-
-def _bm25_suggestions(q: str, limit: int) -> list[dict]:
-    """Fallback: BM25 prefix match on corpus titles when pgvector is unavailable."""
-    retriever = get_retriever()
-    q_lower = q.lower()
-    seen: set[str] = set()
-    results: list[dict] = []
-    for candidate in retriever.corpus:
-        title = candidate.metadata.get("title", "").strip()
-        if title and title.lower() != "untitled" and q_lower in title.lower() and title not in seen:
-            seen.add(title)
-            results.append({"text": title, "source": candidate.metadata.get("source", ""), "kind": candidate.metadata.get("kind", "")})
-            if len(results) >= limit:
-                break
-    return results
+    return {"suggestions": suggestions[:limit]}
 
 
 # ── User Feedback ─────────────────────────────────────────────────────────────

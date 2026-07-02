@@ -1649,6 +1649,10 @@ function ensureCitePanel() {
     citePanel.innerHTML = `
         <div class="cite-panel-head">
             <div class="cite-panel-title"><span class="material-symbols-outlined">menu_book</span> <span id="citePanelTitleText">Citation</span></div>
+            <div class="cite-panel-modes" role="tablist">
+                <button id="citeModePdf" type="button" class="cite-mode-btn is-active" data-mode="pdf"><span class="material-symbols-outlined">picture_as_pdf</span> PDF</button>
+                <button id="citeModeDiff" type="button" class="cite-mode-btn" data-mode="diff"><span class="material-symbols-outlined">difference</span> Changes</button>
+            </div>
             <div class="cite-panel-nav">
                 <button id="citePrev" type="button" title="Previous page"><span class="material-symbols-outlined">chevron_left</span></button>
                 <span id="citePageLabel">—</span>
@@ -1662,6 +1666,8 @@ function ensureCitePanel() {
     citePanel.querySelector("#citePanelClose").addEventListener("click", closeCitePanel);
     citePanel.querySelector("#citePrev").addEventListener("click", () => citeNav(-1));
     citePanel.querySelector("#citeNext").addEventListener("click", () => citeNav(1));
+    citePanel.querySelector("#citeModePdf").addEventListener("click", () => setCiteView("pdf"));
+    citePanel.querySelector("#citeModeDiff").addEventListener("click", () => setCiteView("diff"));
     citePanel.addEventListener("click", (e) => { if (e.target === citePanel) closeCitePanel(); });
     return citePanel;
 }
@@ -1694,18 +1700,90 @@ async function openCitationPanel(src, sources = []) {
         .filter(Boolean);
     if (!snippets.length && focusSnippet) snippets.push(focusSnippet);
 
-    citeState = { source, totalPages: null, currentPage: 0 };
+    citeState = {
+        source, snippets, focusSnippet,
+        view: "pdf",
+        totalPages: null, currentPage: 0,
+        pdfData: null, diffLoaded: false,
+    };
+    setCiteView("pdf");
+}
 
-    const data = await fetchCiteDoc(source, snippets, focusSnippet);
+// Switch the panel between the highlighted PDF and the workspace-vs-original
+// Markdown diff for the same source. PDF page navigation only applies to the
+// PDF view, so it is hidden in diff mode.
+async function setCiteView(view) {
+    if (!citeState) return;
+    citeState.view = view;
+    const panel = ensureCitePanel();
+    panel.querySelectorAll(".cite-mode-btn").forEach((b) =>
+        b.classList.toggle("is-active", b.dataset.mode === view));
+    panel.querySelector(".cite-panel-nav").style.display = view === "pdf" ? "" : "none";
+    if (view === "pdf") await renderCitePdfView();
+    else await renderCiteDiffView();
+}
+
+async function renderCitePdfView() {
+    const panel = ensureCitePanel();
+    const body = panel.querySelector(".cite-panel-body");
+    const loading = panel.querySelector(".cite-panel-loading");
+    if (!citeState.pdfData) {
+        body.innerHTML = "";
+        loading.style.display = "block";
+        const data = await fetchCiteDoc(citeState.source, citeState.snippets, citeState.focusSnippet);
+        loading.style.display = "none";
+        if (citeState.view !== "pdf") return;   // user toggled away while loading
+        if (data.error || !Array.isArray(data.pages) || data.pages.length === 0) {
+            body.innerHTML = `<div class="cite-panel-error"><span class="material-symbols-outlined">error</span> ${escapeHtml(data.error || "Could not load citation view.")}</div>`;
+            return;
+        }
+        citeState.pdfData = data;
+        citeState.totalPages = data.total_pages;
+    }
+    renderCiteDoc(citeState.pdfData);
+}
+
+async function renderCiteDiffView() {
+    const panel = ensureCitePanel();
+    const body = panel.querySelector(".cite-panel-body");
+    const loading = panel.querySelector(".cite-panel-loading");
+    body.onscroll = null;
+    body.innerHTML = "";
+    loading.style.display = "block";
+    let orig = "", work = "";
+    try {
+        const src = encodeURIComponent(citeState.source);
+        const [oRes, wRes] = await Promise.all([
+            fetch(`${DOC_CONTENT_URL}/${src}/content?channel=originals`, { headers: authHeaders() }),
+            fetch(`${DOC_CONTENT_URL}/${src}/content?channel=workspace`, { headers: authHeaders() }),
+        ]);
+        orig = oRes.ok ? ((await oRes.json()).markdown || "") : "";
+        work = wRes.ok ? ((await wRes.json()).markdown || "") : "";
+    } catch { /* fall through to error note below */ }
     loading.style.display = "none";
-    if (data.error || !Array.isArray(data.pages) || data.pages.length === 0) {
-        const msg = data.error || "Could not load citation view.";
-        body.innerHTML = `<div class="cite-panel-error"><span class="material-symbols-outlined">error</span> ${escapeHtml(msg)}</div>`;
-        citeState = null;
+    if (citeState.view !== "diff") return;      // user toggled away while loading
+
+    if (!work && !orig) {
+        body.innerHTML = `<div class="cite-panel-error"><span class="material-symbols-outlined">error</span> No Markdown available for this document.</div>`;
         return;
     }
-    citeState.totalPages = data.total_pages;
-    renderCiteDoc(data);
+    const rows = diffLines(orig.split("\n"), work.split("\n"));
+    const identical = orig.trim() === work.trim();
+    let unified = "";
+    rows.forEach((r) => {
+        if (r.type === "same") {
+            unified += `<div class="cite-diff-line same"><span class="cite-diff-sign"> </span>${escapeHtml(r.left ?? "") || "&nbsp;"}</div>`;
+        } else if (r.type === "removed") {
+            unified += `<div class="cite-diff-line removed"><span class="cite-diff-sign">−</span>${escapeHtml(r.left ?? "") || "&nbsp;"}</div>`;
+        } else if (r.type === "added") {
+            unified += `<div class="cite-diff-line added"><span class="cite-diff-sign">+</span>${escapeHtml(r.right ?? "") || "&nbsp;"}</div>`;
+        }
+    });
+    body.innerHTML =
+        (identical
+            ? `<div class="cite-diff-note">No edits yet — workspace matches the original.</div>`
+            : `<div class="cite-diff-note">Showing changes: <span class="cite-diff-legend removed">− original</span> <span class="cite-diff-legend added">+ workspace</span></div>`) +
+        `<div class="cite-diff">${unified}</div>`;
 }
 
 async function fetchCiteDoc(source, snippets, focusSnippet) {
