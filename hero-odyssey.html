@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hero Odyssey · Lighting Up The Future</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="hero-odyssey.css" />
+  <style>
+    /* DemoOne wrapper: flex w-full h-screen justify-center items-center */
+    html, body { margin: 0; background: #000; }
+    .demo-root { display: flex; width: 100%; height: 100vh; justify-content: center; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="demo-root">
+    <!-- HeroSection -->
+    <div class="hero">
+      <div class="hero__container">
+
+        <!-- Navigation -->
+        <div class="hero__nav">
+          <div class="hero__nav-left">
+            <div class="hero__logo">
+              <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+                <path d="M20 5L5 20L20 35L35 20L20 5Z" stroke="white" stroke-width="2" />
+              </svg>
+            </div>
+            <div class="hero__nav-links">
+              <button class="hero-btn hero-btn--pill" type="button">Start</button>
+              <button class="hero-btn" type="button">Home</button>
+              <button class="hero-btn" type="button">Contacts</button>
+              <button class="hero-btn" type="button">Help</button>
+              <button class="hero-btn" type="button">Docs</button>
+            </div>
+          </div>
+          <div class="hero__nav-right">
+            <button class="hero-btn hero__register" type="button">Register</button>
+            <button class="hero-btn hero-btn--solid" type="button">Application</button>
+            <button class="hero__menu-toggle" type="button" aria-label="Toggle menu">
+              <svg data-icon="open" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              <svg data-icon="close" style="display:none" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile menu -->
+        <div class="hero__mobile-menu">
+          <div class="hero__mobile-menu-inner">
+            <button class="hero__mobile-close" type="button" aria-label="Close menu">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <button class="hero-btn hero-btn--pill" type="button">Start</button>
+            <button class="hero-btn" type="button">Home</button>
+            <button class="hero-btn" type="button">Contacts</button>
+            <button class="hero-btn" type="button">Help</button>
+            <button class="hero-btn" type="button">Docs</button>
+            <button class="hero-btn" type="button">Register</button>
+            <button class="hero-btn hero-btn--solid" type="button">Application</button>
+          </div>
+        </div>
+
+        <!-- Feature items -->
+        <div class="hero__features">
+          <div class="feature-item feature-item--react">
+            <div class="feature-item__row">
+              <div class="feature-item__dot-wrap"><div class="feature-item__dot"></div><div class="feature-item__dot-glow"></div></div>
+              <div class="feature-item__text"><div class="feature-item__name">React</div><div class="feature-item__value">for base</div><div class="feature-item__text-glow"></div></div>
+            </div>
+          </div>
+          <div class="feature-item feature-item--tailwind">
+            <div class="feature-item__row">
+              <div class="feature-item__dot-wrap"><div class="feature-item__dot"></div><div class="feature-item__dot-glow"></div></div>
+              <div class="feature-item__text"><div class="feature-item__name">Tailwind</div><div class="feature-item__value">for styles</div><div class="feature-item__text-glow"></div></div>
+            </div>
+          </div>
+          <div class="feature-item feature-item--framer">
+            <div class="feature-item__row">
+              <div class="feature-item__dot-wrap"><div class="feature-item__dot"></div><div class="feature-item__dot-glow"></div></div>
+              <div class="feature-item__text"><div class="feature-item__name">Framer-motion</div><div class="feature-item__value">for animations</div><div class="feature-item__text-glow"></div></div>
+            </div>
+          </div>
+          <div class="feature-item feature-item--shaders">
+            <div class="feature-item__row">
+              <div class="feature-item__dot-wrap"><div class="feature-item__dot"></div><div class="feature-item__dot-glow"></div></div>
+              <div class="feature-item__text"><div class="feature-item__name">Shaders</div><div class="feature-item__value">for lightning</div><div class="feature-item__text-glow"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main hero content -->
+        <div class="hero__content">
+          <!-- ElasticHueSlider -->
+          <div class="hue-slider">
+            <label class="hue-slider__label" for="hue-slider-native">Adjust Lightning Hue</label>
+            <div class="hue-slider__track-wrap">
+              <input id="hue-slider-native" class="hue-slider__input" type="range" min="0" max="360" step="1" value="220" />
+              <div class="hue-slider__track"></div>
+              <div class="hue-slider__fill"></div>
+              <div class="hue-slider__thumb"></div>
+            </div>
+            <div class="hue-slider__value">220°</div>
+          </div>
+
+          <button class="hero__cta-pill" type="button">
+            <span>Join us for free world</span>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 3L13 8L8 13M13 8H3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+
+          <h1 class="hero__title">Hero Odyssey</h1>
+          <h2 class="hero__subtitle">Lighting Up The Future</h2>
+          <p class="hero__desc">Lightning animation is 100% code generated, so fill free to customize it to your liking.</p>
+
+          <button class="hero__discover" type="button">Discover Those Worlds</button>
+        </div>
+      </div>
+
+      <!-- Background elements -->
+      <div class="hero__bg">
+        <div class="hero__bg-overlay"></div>
+        <div class="hero__glow"></div>
+        <div class="hero__lightning-wrap">
+          <canvas class="hero__lightning-canvas"></canvas>
+        </div>
+        <div class="hero__planet"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="hero-odyssey.js"></script>
+</body>
+</html>
