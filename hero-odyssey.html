@@ -7,7 +7,292 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="hero-odyssey.css" />
+  <style>
+/* ============================================================
+   Hero Odyssey — vanilla port of hero-odyssey.tsx
+   WebGL lightning shader + animated hero, no React/Tailwind.
+   ============================================================ */
+
+* { box-sizing: border-box; }
+
+.hero {
+  position: relative;
+  width: 100%;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ---- Main content container (Tailwind: z-20 max-w-7xl mx-auto ... h-screen) ---- */
+.hero__container {
+  position: relative;
+  z-index: 20;
+  max-width: 80rem;      /* max-w-7xl */
+  margin: 0 auto;
+  padding: 1.5rem 1rem;  /* py-6 px-4 */
+  height: 100vh;
+}
+@media (min-width: 640px) { .hero__container { padding-left: 1.5rem;  padding-right: 1.5rem; } }
+@media (min-width: 1024px){ .hero__container { padding-left: 2rem;    padding-right: 2rem; } }
+
+/* ============================================================
+   Navigation
+   ============================================================ */
+.hero__nav {
+  padding: 1rem;
+  -webkit-backdrop-filter: blur(40px);
+  backdrop-filter: blur(40px);
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 50px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3rem;
+  /* entrance: y:-20 -> 0, opacity 0 -> 1 */
+  animation: heroFadeDown 0.5s ease-out both;
+}
+.hero__nav-left { display: flex; align-items: center; }
+.hero__logo { font-size: 1.5rem; font-weight: 700; display: flex; }
+.hero__nav-links { display: none; align-items: center; gap: 1.5rem; margin-left: 2rem; }
+@media (min-width: 768px) { .hero__nav-links { display: flex; } }
+
+.hero__nav-right { display: flex; align-items: center; gap: 1rem; }
+.hero__register { display: none; }
+@media (min-width: 768px) { .hero__register { display: block; } }
+
+.hero-btn {
+  font-family: inherit;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  border-radius: 9999px;
+  transition: color 0.2s, background-color 0.2s;
+}
+.hero-btn:hover { color: #d1d5db; }
+.hero-btn--pill { background: rgba(31, 41, 55, 0.5); }
+.hero-btn--pill:hover { background: rgba(55, 65, 81, 0.5); color: #fff; }
+.hero-btn--solid { background: rgba(31, 41, 55, 0.8); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.hero-btn--solid:hover { background: rgba(55, 65, 81, 0.8); color: #fff; }
+
+.hero__menu-toggle {
+  display: inline-flex;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+}
+@media (min-width: 768px) { .hero__menu-toggle { display: none; } }
+.hero__menu-toggle svg { height: 1.5rem; width: 1.5rem; }
+
+/* ---- Mobile menu ---- */
+.hero__mobile-menu {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.95);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  animation: heroFade 0.2s ease-out both;
+}
+.hero__mobile-menu.is-open { display: block; }
+.hero__mobile-menu-inner {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; gap: 1.5rem; font-size: 1.125rem;
+}
+.hero__mobile-close { position: absolute; top: 1.5rem; right: 1.5rem; padding: 0.5rem; background: transparent; border: none; color: #fff; cursor: pointer; }
+.hero__mobile-menu-inner .hero-btn { padding: 0.75rem 1.5rem; }
+
+/* ============================================================
+   Feature items (positioned dots + labels)
+   ============================================================ */
+.hero__features {
+  position: relative;
+  z-index: 200;
+  top: 30%;
+  width: 100%;
+}
+.feature-item {
+  position: absolute;
+  z-index: 10;
+  transition: transform 0.3s;
+}
+.feature-item:hover { transform: scale(1.1); }
+.feature-item__row { display: flex; align-items: center; gap: 0.5rem; position: relative; }
+.feature-item__dot-wrap { position: relative; }
+.feature-item__dot { width: 0.5rem; height: 0.5rem; background: #fff; border-radius: 9999px; }
+.feature-item:hover .feature-item__dot { animation: heroPulse 1.5s cubic-bezier(0.4,0,0.6,1) infinite; }
+.feature-item__dot-glow {
+  position: absolute; inset: -0.25rem;
+  background: rgba(255,255,255,0.2); border-radius: 9999px;
+  filter: blur(4px); opacity: 0.7; transition: opacity 0.3s;
+}
+.feature-item:hover .feature-item__dot-glow { opacity: 1; }
+.feature-item__text { color: #fff; position: relative; }
+.feature-item__name { font-weight: 500; }
+.feature-item__value { color: rgba(255,255,255,0.7); font-size: 0.875rem; }
+.feature-item__text-glow {
+  position: absolute; inset: -0.5rem; z-index: -10;
+  background: rgba(255,255,255,0.1); border-radius: 0.5rem;
+  filter: blur(12px); opacity: 0.7; transition: opacity 0.3s;
+}
+.feature-item:hover .feature-item__text-glow { opacity: 1; }
+
+/* Positions (translate Tailwind positional utilities) */
+.feature-item--react     { left: 0;   top: 10rem; }
+.feature-item--tailwind  { left: 25%; top: 6rem; }
+.feature-item--framer    { right: 25%; top: 6rem; }
+.feature-item--shaders   { right: 0;  top: 10rem; }
+@media (min-width: 640px) {
+  .feature-item--react   { left: 2.5rem; }
+  .feature-item--shaders { right: 2.5rem; }
+}
+
+/* Entrance stagger for feature items */
+.hero__features .feature-item { animation: heroFadeUp 0.5s ease-out both; }
+.feature-item--react    { animation-delay: 0.2s; }
+.feature-item--tailwind { animation-delay: 0.5s; }
+.feature-item--framer   { animation-delay: 0.8s; }
+.feature-item--shaders  { animation-delay: 1.1s; }
+
+/* ============================================================
+   Main hero content
+   ============================================================ */
+.hero__content {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 56rem;   /* max-w-4xl */
+  margin: 0 auto;
+}
+/* stagger children */
+.hero__content > * { animation: heroFadeUp 0.5s ease-out both; }
+.hero__content > *:nth-child(1) { animation-delay: 0.2s; }
+.hero__content > *:nth-child(2) { animation-delay: 0.5s; }
+.hero__content > *:nth-child(3) { animation-delay: 0.8s; }
+.hero__content > *:nth-child(4) { animation-delay: 1.1s; }
+.hero__content > *:nth-child(5) { animation-delay: 1.4s; }
+.hero__content > *:nth-child(6) { animation-delay: 1.7s; }
+
+.hero__cta-pill {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255,255,255,0.05);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  border: none; color: #fff; cursor: pointer;
+  border-radius: 9999px; font-size: 0.875rem; margin-bottom: 1.5rem;
+  transition: background-color 0.3s, transform 0.15s;
+}
+.hero__cta-pill:hover { background: rgba(255,255,255,0.1); transform: scale(1.05); }
+.hero__cta-pill:active { transform: scale(0.95); }
+.hero__cta-pill svg { transition: transform 0.3s; }
+.hero__cta-pill:hover svg { transform: translateX(0.25rem); }
+
+.hero__title {
+  font-size: 3rem; line-height: 1; font-weight: 300; margin: 0 0 0.5rem;
+}
+@media (min-width: 768px) { .hero__title { font-size: 4.5rem; } }
+
+.hero__subtitle {
+  font-size: 1.875rem; padding-bottom: 0.75rem; font-weight: 300; margin: 0;
+  background: linear-gradient(to right, #f3f4f6, #e5e7eb, #d1d5db);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+@media (min-width: 768px) { .hero__subtitle { font-size: 3rem; } }
+
+.hero__desc { color: #9ca3af; margin: 0 0 2.25rem; max-width: 42rem; }
+
+.hero__discover {
+  margin-top: 100px;
+  padding: 0.75rem 2rem;
+  background: rgba(255,255,255,0.1);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  border: none; color: #fff; cursor: pointer;
+  border-radius: 9999px;
+  transition: background-color 0.2s, transform 0.15s;
+}
+.hero__discover:hover { background: rgba(255,255,255,0.2); transform: scale(1.05); }
+.hero__discover:active { transform: scale(0.95); }
+
+/* ============================================================
+   Elastic Hue Slider
+   ============================================================ */
+.hue-slider {
+  transform: scale(0.5);
+  position: relative;
+  width: 100%;
+  max-width: 20rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.hue-slider__label { color: #d1d5db; font-size: 0.875rem; margin-bottom: 0.25rem; }
+.hue-slider__track-wrap { position: relative; width: 100%; height: 1.25rem; display: flex; align-items: center; }
+
+/* native input, transparent, on top */
+.hue-slider__input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  -webkit-appearance: none; appearance: none;
+  background: transparent; cursor: pointer; z-index: 20; margin: 0;
+}
+.hue-slider__input::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; background: transparent; cursor: pointer; }
+.hue-slider__input::-moz-range-thumb { width: 20px; height: 20px; background: transparent; border: none; cursor: pointer; }
+
+.hue-slider__track { position: absolute; left: 0; width: 100%; height: 0.25rem; background: #374151; border-radius: 9999px; z-index: 0; }
+.hue-slider__fill  { position: absolute; left: 0; height: 0.25rem; background: #3b82f6; border-radius: 9999px; z-index: 10; }
+.hue-slider__thumb {
+  position: absolute; top: 50%; z-index: 30;
+  width: 14px; height: 14px; border-radius: 9999px;
+  background: #fff; box-shadow: 0 0 8px rgba(59,130,246,0.9);
+  transform: translate(-50%, -50%) scale(1);
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1); /* springy */
+}
+.hue-slider__thumb.is-dragging { transform: translate(-50%, -50%) scale(1.2); }
+.hue-slider__value { font-size: 0.75rem; color: #6b7280; margin-top: 0.5rem; animation: heroValuePop 0.2s ease-out; }
+
+/* ============================================================
+   Background elements
+   ============================================================ */
+.hero__bg { position: absolute; inset: 0; z-index: 0; animation: heroFade 1s ease-out both; }
+.hero__bg-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); }
+.hero__glow {
+  position: absolute; top: 55%; left: 50%; transform: translate(-50%, -50%);
+  width: 800px; height: 800px; border-radius: 9999px;
+  background: linear-gradient(to bottom, rgba(59,130,246,0.2), rgba(147,51,234,0.1));
+  filter: blur(48px);
+}
+.hero__lightning-wrap { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 100%; height: 100%; }
+.hero__lightning-canvas { width: 100%; height: 100%; position: relative; display: block; }
+.hero__planet {
+  z-index: 10; position: absolute; top: 55%; left: 50%; transform: translateX(-50%);
+  width: 600px; height: 600px; border-radius: 9999px;
+  -webkit-backdrop-filter: blur(48px); backdrop-filter: blur(48px);
+  background: radial-gradient(circle at 25% 90%, #1e386b 15%, rgba(0,0,0,0.87) 70%, rgba(0,0,0,0.93) 100%);
+}
+
+/* ============================================================
+   Keyframes
+   ============================================================ */
+@keyframes heroFadeUp   { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes heroFadeDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes heroFade     { from { opacity: 0; } to { opacity: 1; } }
+@keyframes heroValuePop { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes heroPulse    { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero *, .hero { animation-duration: 0.001ms !important; }
+}
+
+  </style>
   <style>
     /* DemoOne wrapper: flex w-full h-screen justify-center items-center */
     html, body { margin: 0; background: #000; }
@@ -137,6 +422,274 @@
     </div>
   </div>
 
-  <script src="hero-odyssey.js"></script>
+  <script>
+/* ============================================================
+   Hero Odyssey — vanilla JS port of hero-odyssey.tsx
+   - Lightning: WebGL fragment shader (ported verbatim from React)
+   - ElasticHueSlider: native range wired to a custom animated thumb
+   - Mobile menu toggle + entrance animations (CSS-driven)
+   ============================================================ */
+(function () {
+  "use strict";
+
+  /* ---------------------------------------------------------
+     Lightning — WebGL animated shader
+     Mirrors the <Lightning /> React component 1:1.
+     --------------------------------------------------------- */
+  function initLightning(canvas, opts) {
+    var hue = opts.hue,
+      xOffset = opts.xOffset || 0,
+      speed = opts.speed || 1,
+      intensity = opts.intensity || 1,
+      size = opts.size || 1;
+
+    function resizeCanvas() {
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+    }
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+
+    var gl = canvas.getContext("webgl");
+    if (!gl) {
+      console.error("WebGL not supported");
+      return { setHue: function () {} };
+    }
+
+    var vertexShaderSource =
+      "attribute vec2 aPosition;" +
+      "void main() { gl_Position = vec4(aPosition, 0.0, 1.0); }";
+
+    var fragmentShaderSource = [
+      "precision mediump float;",
+      "uniform vec2 iResolution;",
+      "uniform float iTime;",
+      "uniform float uHue;",
+      "uniform float uXOffset;",
+      "uniform float uSpeed;",
+      "uniform float uIntensity;",
+      "uniform float uSize;",
+      "#define OCTAVE_COUNT 10",
+      "vec3 hsv2rgb(vec3 c) {",
+      "  vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0,4.0,2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);",
+      "  return c.z * mix(vec3(1.0), rgb, c.y);",
+      "}",
+      "float hash11(float p) {",
+      "  p = fract(p * .1031);",
+      "  p *= p + 33.33;",
+      "  p *= p + p;",
+      "  return fract(p);",
+      "}",
+      "float hash12(vec2 p) {",
+      "  vec3 p3 = fract(vec3(p.xyx) * .1031);",
+      "  p3 += dot(p3, p3.yzx + 33.33);",
+      "  return fract((p3.x + p3.y) * p3.z);",
+      "}",
+      "mat2 rotate2d(float theta) {",
+      "  float c = cos(theta);",
+      "  float s = sin(theta);",
+      "  return mat2(c, -s, s, c);",
+      "}",
+      "float noise(vec2 p) {",
+      "  vec2 ip = floor(p);",
+      "  vec2 fp = fract(p);",
+      "  float a = hash12(ip);",
+      "  float b = hash12(ip + vec2(1.0, 0.0));",
+      "  float c = hash12(ip + vec2(0.0, 1.0));",
+      "  float d = hash12(ip + vec2(1.0, 1.0));",
+      "  vec2 t = smoothstep(0.0, 1.0, fp);",
+      "  return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);",
+      "}",
+      "float fbm(vec2 p) {",
+      "  float value = 0.0;",
+      "  float amplitude = 0.5;",
+      "  for (int i = 0; i < OCTAVE_COUNT; ++i) {",
+      "    value += amplitude * noise(p);",
+      "    p *= rotate2d(0.45);",
+      "    p *= 2.0;",
+      "    amplitude *= 0.5;",
+      "  }",
+      "  return value;",
+      "}",
+      "void mainImage( out vec4 fragColor, in vec2 fragCoord ) {",
+      "  vec2 uv = fragCoord / iResolution.xy;",
+      "  uv = 2.0 * uv - 1.0;",
+      "  uv.x *= iResolution.x / iResolution.y;",
+      "  uv.x += uXOffset;",
+      "  uv += 2.0 * fbm(uv * uSize + 0.8 * iTime * uSpeed) - 1.0;",
+      "  float dist = abs(uv.x);",
+      "  vec3 baseColor = hsv2rgb(vec3(uHue / 360.0, 0.7, 0.8));",
+      "  vec3 col = baseColor * pow(mix(0.0, 0.07, hash11(iTime * uSpeed)) / dist, 1.0) * uIntensity;",
+      "  col = pow(col, vec3(1.0));",
+      "  fragColor = vec4(col, 1.0);",
+      "}",
+      "void main() { mainImage(gl_FragColor, gl_FragCoord.xy); }"
+    ].join("\n");
+
+    function compileShader(source, type) {
+      var shader = gl.createShader(type);
+      if (!shader) return null;
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error("Shader compile error:", gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    var vertexShader = compileShader(vertexShaderSource, gl.VERTEX_SHADER);
+    var fragmentShader = compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER);
+    if (!vertexShader || !fragmentShader) return { setHue: function () {} };
+
+    var program = gl.createProgram();
+    if (!program) return { setHue: function () {} };
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error("Program linking error:", gl.getProgramInfoLog(program));
+      return { setHue: function () {} };
+    }
+    gl.useProgram(program);
+
+    var vertices = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+    var vertexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+    var aPosition = gl.getAttribLocation(program, "aPosition");
+    gl.enableVertexAttribArray(aPosition);
+    gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+
+    var iResolutionLocation = gl.getUniformLocation(program, "iResolution");
+    var iTimeLocation = gl.getUniformLocation(program, "iTime");
+    var uHueLocation = gl.getUniformLocation(program, "uHue");
+    var uXOffsetLocation = gl.getUniformLocation(program, "uXOffset");
+    var uSpeedLocation = gl.getUniformLocation(program, "uSpeed");
+    var uIntensityLocation = gl.getUniformLocation(program, "uIntensity");
+    var uSizeLocation = gl.getUniformLocation(program, "uSize");
+
+    var startTime = performance.now();
+    var rafId;
+    function render() {
+      resizeCanvas();
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.uniform2f(iResolutionLocation, canvas.width, canvas.height);
+      var currentTime = performance.now();
+      gl.uniform1f(iTimeLocation, (currentTime - startTime) / 1000.0);
+      gl.uniform1f(uHueLocation, hue);
+      gl.uniform1f(uXOffsetLocation, xOffset);
+      gl.uniform1f(uSpeedLocation, speed);
+      gl.uniform1f(uIntensityLocation, intensity);
+      gl.uniform1f(uSizeLocation, size);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      rafId = requestAnimationFrame(render);
+    }
+    rafId = requestAnimationFrame(render);
+
+    return {
+      setHue: function (h) { hue = h; },
+      destroy: function () {
+        cancelAnimationFrame(rafId);
+        window.removeEventListener("resize", resizeCanvas);
+      }
+    };
+  }
+
+  /* ---------------------------------------------------------
+     ElasticHueSlider — native range + animated custom thumb/fill
+     Replaces framer-motion spring with a CSS spring transition.
+     --------------------------------------------------------- */
+  function initHueSlider(root, onChange) {
+    var input = root.querySelector(".hue-slider__input");
+    var fill = root.querySelector(".hue-slider__fill");
+    var thumb = root.querySelector(".hue-slider__thumb");
+    var valueEl = root.querySelector(".hue-slider__value");
+
+    var min = Number(input.min) || 0;
+    var max = Number(input.max) || 360;
+
+    function update() {
+      var value = Number(input.value);
+      var progress = (value - min) / (max - min);
+      var pct = progress * 100;
+      fill.style.width = pct + "%";
+      thumb.style.left = pct + "%";
+      // retrigger the pop animation on the value label
+      valueEl.textContent = value + "°";
+      valueEl.style.animation = "none";
+      /* force reflow so the animation restarts */
+      void valueEl.offsetWidth;
+      valueEl.style.animation = "";
+      if (onChange) onChange(value);
+    }
+
+    input.addEventListener("input", update);
+
+    var startDrag = function () { thumb.classList.add("is-dragging"); };
+    var endDrag = function () { thumb.classList.remove("is-dragging"); };
+    input.addEventListener("mousedown", startDrag);
+    input.addEventListener("touchstart", startDrag, { passive: true });
+    window.addEventListener("mouseup", endDrag);
+    window.addEventListener("touchend", endDrag);
+
+    update(); // initialise positions
+  }
+
+  /* ---------------------------------------------------------
+     Mobile menu toggle
+     --------------------------------------------------------- */
+  function initMobileMenu(root) {
+    var toggle = root.querySelector(".hero__menu-toggle");
+    var menu = root.querySelector(".hero__mobile-menu");
+    var closeBtn = root.querySelector(".hero__mobile-close");
+    var openIcon = toggle.querySelector('[data-icon="open"]');
+    var closeIcon = toggle.querySelector('[data-icon="close"]');
+
+    function setOpen(open) {
+      menu.classList.toggle("is-open", open);
+      if (openIcon && closeIcon) {
+        openIcon.style.display = open ? "none" : "";
+        closeIcon.style.display = open ? "" : "none";
+      }
+    }
+    toggle.addEventListener("click", function () {
+      setOpen(!menu.classList.contains("is-open"));
+    });
+    if (closeBtn) closeBtn.addEventListener("click", function () { setOpen(false); });
+  }
+
+  /* --------------------------------------------------------- */
+  function boot() {
+    var root = document.querySelector(".hero");
+    if (!root) return;
+
+    var canvas = root.querySelector(".hero__lightning-canvas");
+    var lightning = initLightning(canvas, {
+      hue: 220,       // default lightningHue
+      xOffset: 0,
+      speed: 1.6,
+      intensity: 0.6,
+      size: 2
+    });
+
+    var slider = root.querySelector(".hue-slider");
+    if (slider) {
+      initHueSlider(slider, function (value) { lightning.setHue(value); });
+    }
+
+    initMobileMenu(root);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+
+  </script>
 </body>
 </html>
