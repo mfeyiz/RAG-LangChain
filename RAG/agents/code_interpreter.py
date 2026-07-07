@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm
@@ -60,12 +60,12 @@ async def code_interpreter_node(state: AgentState) -> dict:
     with traced_observation("code_interpreter", input_payload={"query": state["query"]}) as span:
         if not _CI_ENABLED:
             span.update(output={"disabled": True})
-            return {"calc_result": "", "messages": [AIMessage(content="Code interpreter disabled.")]}
+            return {"calc_result": ""}
 
         tables = list_all_tables()
         if not tables:
             span.update(output={"no_tables": True})
-            return {"calc_result": "", "messages": [AIMessage(content="No tables available to compute over.")]}
+            return {"calc_result": ""}
 
         # Pick the most relevant tables by naive keyword overlap with the query
         # before handing the catalogue to the codegen LLM — keeps the prompt tight.
@@ -104,7 +104,6 @@ async def code_interpreter_node(state: AgentState) -> dict:
             "rewritten_query": state["query"],
             "source_type": "table",
             "context_images": context_images,
-            "messages": [AIMessage(content=f"Code interpreter: {result_text[:200]}")],
         }
         return updates
 

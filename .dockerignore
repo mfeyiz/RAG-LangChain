@@ -21,3 +21,9 @@ RAG/traces/
 CODE_REVIEW.md
 k8s/
 cloudbuild.yaml
+# Secrets and one-off local artefacts must never ship in the image.
+project-*.json
+*service-account*.json
+*-sa-key.json
+SOCRadar Template.docx
+RAG/data/hotpotqa/

@@ -183,21 +183,3 @@ def restore(source: str, ref: str) -> dict:
         if p.exists():
             restored.append(t)
     return {"source": source, "sha": ref, "restored_files": restored}
-
-
-def diff_at(source: str, ref: str | None = None) -> dict:
-    """Return a textual diff of a document at a given commit vs the working tree
-    (or vs the previous commit when ref is the HEAD-ish tip)."""
-    if not _GIT_AVAILABLE:
-        return {"text": "", "available": False}
-    repo = _repo()
-    if repo is None:
-        return {"text": "", "available": False}
-    try:
-        if ref is None:
-            text = repo.git.diff("HEAD", "--", f"markdown/{source}")
-        else:
-            text = repo.git.show(f"{ref}", "--", f"markdown/{source}")
-    except Exception as exc:
-        return {"text": "", "available": False, "error": str(exc)}
-    return {"text": text, "available": True}

@@ -1,6 +1,6 @@
 import json
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm
@@ -58,7 +58,6 @@ async def reviewer_node(state: AgentState) -> dict:
             return {
                 "final_response": state["draft_response"],
                 "review_feedback": "",
-                "messages": [AIMessage(content="Response approved.")],
             }
 
         print(f"[Reviewer] Revision requested: {feedback[:100]}")
@@ -72,7 +71,6 @@ async def reviewer_node(state: AgentState) -> dict:
             "review_feedback": feedback,
             "revision_count": revision_count + 1,
             "draft_response": "",
-            "messages": [AIMessage(content=f"Revision requested: {feedback[:100]}")],
         }
 
 

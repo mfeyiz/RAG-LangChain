@@ -2,7 +2,7 @@ import base64
 import mimetypes
 import os
 
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm, get_vision_llm
@@ -125,7 +125,6 @@ async def writer_node(state: AgentState) -> dict:
                 return {
                     "final_response": _NO_DOCS_REPLY,
                     "draft_response": _NO_DOCS_REPLY,
-                    "messages": [AIMessage(content=_NO_DOCS_REPLY)],
                 }
             print("[Writer] Fast-track: answering from general knowledge (no retrieval).")
 
@@ -203,11 +202,9 @@ async def writer_node(state: AgentState) -> dict:
         if _REVIEWER_ENABLED and not state.get("fast_track"):
             return {
                 "draft_response": draft,
-                "messages": [AIMessage(content="Response draft prepared.")],
             }
 
         return {
             "draft_response": draft,
             "final_response": draft,
-            "messages": [AIMessage(content="Response prepared.")],
         }

@@ -1,6 +1,6 @@
 import os
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from RAG.agents.multi_hop import decompose_question, extract_answer_for_next_step, build_chained_query
 from RAG.agents.state import AgentState
@@ -109,7 +109,6 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
                 "web_sources": [],
                 "hop_steps": [],
                 "hop_context": "",
-                "messages": [AIMessage(content="Awaiting web search approval.")],
             }
 
         print(f"[Researcher] Web search approved — querying the web.")
@@ -141,9 +140,6 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
                 "web_sources": web["sources"],
                 "hop_steps": [],
                 "hop_context": "",
-                "messages": [
-                    AIMessage(content=f"Web search completed: {len(web['sources'])} sources found.")
-                ],
             }
 
     span.update(output={"rewritten_query": rewritten_query, "result_count": result_count})
@@ -157,9 +153,6 @@ async def _single_hop_retrieve(state: AgentState, original_query: str, span) -> 
         "hop_steps": [],
         "hop_context": "",
         "context_images": _collect_context_images(metadata),
-        "messages": [
-            AIMessage(content=f"Research completed: {result_count} chunks found for query: {rewritten_query}")
-        ],
     }
 
 
@@ -205,9 +198,6 @@ async def _multi_hop_retrieve(state: AgentState, decomposed: dict, span) -> dict
         "hop_steps": completed_steps,
         "hop_context": aggregated_context,
         "context_images": _collect_context_images(all_metadata),
-        "messages": [
-            AIMessage(content=f"Multi-hop research completed: {len(steps)} hops, {len(all_metadata)} chunks.")
-        ],
     }
 
 

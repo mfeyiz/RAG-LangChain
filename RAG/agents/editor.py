@@ -14,7 +14,7 @@ Unquoted text is the LLM instruction (what/where to change).
 import asyncio
 import re
 
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from RAG.agents.state import AgentState
 from RAG.agents.supervisor import get_llm
@@ -269,7 +269,6 @@ async def editor_node(state: AgentState) -> dict:
             "edit_target_file": source,
             "edit_instruction": raw_instruction,
             "final_response": "",
-            "messages": [AIMessage(content="Change preview ready — waiting for your approval.")],
         }
 
 
@@ -656,7 +655,6 @@ def _finish(message: str) -> dict:
         "next_agent": "finish",
         "final_response": message,
         "edit_summary": message,
-        "messages": [AIMessage(content=message)],
     }
 
 
