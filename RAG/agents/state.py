@@ -1,13 +1,10 @@
-from typing import TypedDict, Annotated, Literal, Sequence
-from langchain_core.messages import BaseMessage
-import operator
+from typing import TypedDict, Literal
 
 
 AgentRole = Literal["supervisor", "researcher", "writer", "reviewer", "editor", "finish"]
 
 
 class AgentState(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], operator.add]
     next_agent: AgentRole
     query: str
     research_results: str

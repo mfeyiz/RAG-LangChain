@@ -259,7 +259,6 @@ async def handle_query(request: Request):
 
     async def event_generator():
         initial_state = {
-            "messages": [],
             "next_agent": "supervisor",
             "query": user_query,
             "research_results": "",

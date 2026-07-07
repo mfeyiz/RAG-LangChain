@@ -76,7 +76,3 @@ def get(source: str) -> dict | None:
 
 def all_reports() -> dict:
     return _load()
-
-
-def is_report(source: str) -> bool:
-    return source in _load()

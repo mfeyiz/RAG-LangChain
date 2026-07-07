@@ -191,7 +191,6 @@ async function sendMessage() {
     if (!message || sendButton.disabled) return;
     userInput.value = "";
     autoResize();
-    querySource = "chat";
     runQuery(message);
 }
 
@@ -2126,7 +2125,6 @@ newSessionButton.addEventListener("click", () => {
    EDITOR TAB - RICH TEXT WYSIWYG & CHAT ACTIONS
    ═══════════════════════════════════════════════════════════════ */
 let editorZoom = 1.0;
-let querySource = "chat";
 
 // Auto resize for editor composer
 function autoResizeEditorInput() {

@@ -88,10 +88,6 @@ def workspace_images_dir(source: str) -> Path:
     return WORKSPACE_IMG_DIR / stem_of(source)
 
 
-def channel_images_dir(channel: str, source: str) -> Path:
-    return _CHANNEL_IMG_DIR[channel] / stem_of(source)
-
-
 def image_path(channel: str, stem: str, name: str) -> Path | None:
     """Resolve a single figure file, guarding against path traversal."""
     base = (_CHANNEL_IMG_DIR.get(channel) or WORKSPACE_IMG_DIR) / sanitize_stem(stem)

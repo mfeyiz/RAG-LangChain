@@ -1340,16 +1340,6 @@ h1, h2 {
 
 .web-link:hover { text-decoration: underline; }
 
-/* ── Citation links (web answers) ────────────────────────────── */
-.cite-link {
-    color: #2563eb;
-    font-weight: 600;
-    text-decoration: none;
-    cursor: pointer;
-}
-
-.cite-link:hover { text-decoration: underline; }
-
 /* ── Web search approval prompt ──────────────────────────────── */
 .web-approval {
     display: flex;

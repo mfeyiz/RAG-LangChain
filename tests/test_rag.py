@@ -29,7 +29,6 @@ def test_graph_creation():
 def test_agent_state_structure():
     from RAG.agents.state import AgentState
     state = AgentState(
-        messages=[],
         next_agent="supervisor",
         query="test",
         research_results="",

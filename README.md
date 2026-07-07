@@ -1,6 +1,6 @@
 # RAG Multi-Agent System
 
-FastAPI, LangGraph, BGE-M3, Postgres + pgvector, hybrid retrieval, BGE reranking, token auth, and optional RAGAS/DeepEval evaluation.
+FastAPI, LangGraph, BGE-M3, Postgres + pgvector, hybrid retrieval, BGE reranking, and token auth.
 
 ## Pipeline
 
@@ -33,10 +33,6 @@ flowchart TD
     subgraph Platform[Platform Services]
         X[Redis cache / session state]
         Y[Langfuse tracing]
-    end
-
-    subgraph Evaluation[Evaluation]
-        Z[RAGAS + DeepEval]
     end
 
     J -. token/session lookup .-> X

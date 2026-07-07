@@ -19,7 +19,6 @@ from pathlib import Path
 from RAG.services import paths
 
 TABLES_DIR_BASE = paths.WORKSPACE_MD_DIR.parent / "tables"
-ORIGINALS_TABLES_DIR = TABLES_DIR_BASE  # tables are derived; kept only in workspace for editability
 
 
 def _tables_dir(source: str) -> Path:
@@ -98,26 +97,6 @@ def _write_sidecar(out_dir: Path, name: str, rec: dict) -> None:
         json.dumps({"headers": rec["headers"], "rows": rec["rows"]}, ensure_ascii=False),
         encoding="utf-8",
     )
-
-
-def load_tables(source: str) -> list[dict]:
-    """Load the persisted JSON sidecars for a source back into memory."""
-    d = TABLES_DIR_BASE / paths.stem_of(source)
-    out: list[dict] = []
-    if not d.exists():
-        return out
-    for p in sorted(d.glob("table_*.json")):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            out.append({
-                "name": p.stem,
-                "headers": data.get("headers", []),
-                "rows": data.get("rows", []),
-                "csv_path": str(p.with_suffix(".csv")),
-            })
-        except Exception as exc:
-            print(f"[TableStore] failed to load {p.name}: {exc}")
-    return out
 
 
 def list_all_tables() -> list[dict]:
