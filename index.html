@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,10 +8,18 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20260707c">
+    <link rel="stylesheet" href="style.css?v=20260707d">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
+    <!-- ── Hero Odyssey ambient background (WebGL lightning) ──────── -->
+    <div class="hero-bg-layer" aria-hidden="true">
+        <canvas class="hero-bg-canvas"></canvas>
+        <div class="hero-bg-glow"></div>
+        <div class="hero-bg-planet"></div>
+        <div class="hero-bg-overlay"></div>
+    </div>
+
     <header class="top-bar">
         <div class="brand">
             <div class="brand-mark">
@@ -759,6 +767,7 @@
         </button>
     </div>
 
-    <script src="script.js?v=20260707c"></script>
+    <script src="script.js?v=20260707d"></script>
+    <script src="hero-bg.js?v=20260707d"></script>
 </body>
 </html>
