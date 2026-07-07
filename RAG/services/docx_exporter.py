@@ -118,6 +118,7 @@ def render(source: str) -> Path:
         if el.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
             level = int(el.name[1])
             p = doc.add_paragraph()
+            p.style = doc.styles[f"Heading {level}"]
             p.paragraph_format.space_before = Pt(18 if level == 1 else 12)
             p.paragraph_format.space_after = Pt(6)
             run = p.add_run(el.text)
