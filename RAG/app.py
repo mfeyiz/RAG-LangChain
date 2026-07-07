@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from RAG.agents.graph import create_graph
+from RAG.agents.report_graph import create_report_graph
 from RAG.services import users, vector_store
 from RAG.services.auth import (
     authenticate_request,
@@ -58,6 +59,9 @@ async def lifespan(_app: FastAPI):
     # Set up graph and checkpointer first so FastAPI is fully configured
     # to handle incoming requests.
     _app.state.graph, _app.state.checkpointer = await create_graph()
+    # Independent report-generation graph (Supervisor→Researcher→Writer→Reviewer).
+    # Compiled without a checkpointer; fully decoupled from the /ask graph above.
+    _app.state.report_graph = create_report_graph()
 
     async def startup_sequence():
         global _index_ready
@@ -973,103 +977,15 @@ async def generate_report(body: GenerateReportRequest, request: Request):
         return JSONResponse({"error": "A report topic/instruction is required."}, status_code=400)
 
     async def event_generator():
-        from RAG.agents.supervisor import get_llm
-        from RAG.services.retrieval import retrieve_context_async
-        from langchain_core.messages import SystemMessage
+        from RAG.services import report_charts, report_registry
 
-        llm = get_llm()
         trace_id = new_trace_id()
 
         try:
-            # 1. Outline Planning
-            yield {
-                "event": "status",
-                "data": json.dumps({"message": "Planning report outline..."}, ensure_ascii=False),
-            }
-
-            outline_prompt = f"""You are a professional report planner. Plan the outline for a report titled "{title}" on the topic: "{topic}".
-The report template chosen is "{template}".
-Based on this template, generate a list of section objects in JSON format.
-Each object must have "title" (the section heading) and "description" (a brief guide of what to write about, referencing specific aspects of the topic).
-
-Standard templates and their required sections:
-- business-report: Executive Summary, Background, Analysis, Key Metrics, Recommendations, Conclusion
-- research-summary: Abstract, Question, Findings, Discussion, References
-- project-status: Status Overview, Progress This Period, Upcoming, Risks & Blockers, Metrics
-- blank: Create 4-6 logical, well-structured sections appropriate for the topic.
-
-Return ONLY a valid JSON array of objects, containing no markdown code fences, no introductory or concluding text.
-Example:
-[
-  {{"title": "Section Title 1", "description": "What to write..."}},
-  {{"title": "Section Title 2", "description": "What to write..."}}
-]
-"""
-            response = await llm.ainvoke([SystemMessage(content=outline_prompt)])
-            content = response.content.strip()
-            if content.startswith("```"):
-                content = re.sub(r"^```(?:json)?\n", "", content)
-                content = re.sub(r"\n```$", "", content)
-            
-            try:
-                sections = json.loads(content.strip())
-            except Exception:
-                if template == "research-summary":
-                    sections = [
-                        {"title": "Abstract", "description": "Summary of research question and findings"},
-                        {"title": "Question", "description": "Core research question"},
-                        {"title": "Findings", "description": "Key findings and cited evidence"},
-                        {"title": "Discussion", "description": "Discussion and limitations"},
-                        {"title": "References", "description": "Sources used"}
-                    ]
-                elif template == "project-status":
-                    sections = [
-                        {"title": "Status Overview", "description": "Overall status summary"},
-                        {"title": "Progress This Period", "description": "Achievements in this period"},
-                        {"title": "Upcoming", "description": "Next steps planned"},
-                        {"title": "Risks & Blockers", "description": "Risks, blockers and mitigations"},
-                        {"title": "Metrics", "description": "Performance metrics"}
-                    ]
-                else:
-                    sections = [
-                        {"title": "Executive Summary", "description": "High-level summary of findings"},
-                        {"title": "Background", "description": "Context and goals"},
-                        {"title": "Analysis", "description": "Detailed analysis of topic"},
-                        {"title": "Key Metrics", "description": "Key metrics table"},
-                        {"title": "Recommendations", "description": "Actionable recommendations"},
-                        {"title": "Conclusion", "description": "Summary and close"}
-                    ]
-
-            yield {
-                "event": "status",
-                "data": json.dumps({"message": f"Outline created with {len(sections)} sections."}, ensure_ascii=False),
-            }
-
             # Reserve the report source now so charts can be written into its
-            # image folder as we generate.
+            # image folder once the draft is assembled.
             source = _unique_workspace_source(title)
             stem = paths.stem_of(source)
-            from RAG.services import report_charts, report_registry
-            from RAG.services.web_search import web_search, web_search_available
-
-            # One web search for the whole topic (results are reused per section).
-            web_context, web_sources = "", []
-            if web_search_available():
-                yield {
-                    "event": "status",
-                    "data": json.dumps({"message": "Searching the web…"}, ensure_ascii=False),
-                }
-                try:
-                    web = await asyncio.to_thread(web_search, f"{title} {topic}")
-                    web_context = (web.get("context", "") or "")[:3500]
-                    web_sources = web.get("sources", []) or []
-                except Exception as exc:
-                    print(f"[generate] web search failed: {exc}")
-
-            # Cap sections and bound tokens so generation stays fast (~1-2 min) and
-            # never runs away.
-            sections = sections[:6]
-            section_llm = llm.bind(max_tokens=800)
 
             def _embed_charts(md: str) -> str:
                 """Replace ```chart JSON blocks with rendered PNG image links."""
@@ -1087,96 +1003,52 @@ Example:
 
                 return report_charts.CHART_BLOCK_RE.sub(repl, md)
 
-            # One shared retrieval for the whole topic (avoids 6× reranker latency).
-            yield {
-                "event": "status",
-                "data": json.dumps({"message": "Gathering evidence…"}, ensure_ascii=False),
+            # Drive the multi-agent report graph. Node progress arrives on the
+            # "custom" stream (status / section_start / section_complete events);
+            # the final assembled state arrives on the "values" stream.
+            graph = request.app.state.report_graph
+            initial_state = {
+                "topic": topic,
+                "title": title,
+                "template": template,
+                "trace_id": trace_id,
+                "revision_count": 0,
             }
-            try:
-                shared_context, _ = await retrieve_context_async(f"{title} {topic}", top_k=6)
-            except Exception:
-                shared_context = ""
-            sources_block = f"\n\nWEB SEARCH RESULTS (from the internet):\n{web_context}" if web_context else ""
+            final_state: dict = {}
+            async for mode, payload in graph.astream(
+                initial_state,
+                stream_mode=["custom", "values"],
+                config={"recursion_limit": 50},
+            ):
+                if mode == "custom":
+                    yield {
+                        "event": payload.get("event", "status"),
+                        "data": json.dumps(payload.get("data", {}), ensure_ascii=False),
+                    }
+                elif mode == "values":
+                    final_state = payload
 
-            def _section_prompt(sec_title: str, sec_desc: str) -> str:
-                return f"""You are a professional report writer producing ONE section of a report. Write accurate, well-structured, professional markdown.
-
-Topic / Instructions: {topic}
-Section Title: {sec_title}
-Section Focus: {sec_desc}
-
-LOCAL DOCUMENT CONTEXT:
-{shared_context or '(no local documents matched — rely on the web results and general knowledge)'}{sources_block}
-
-Rules:
-1. Respond in the SAME LANGUAGE as the Topic / Instructions (Turkish or English).
-2. Prefer the provided web results and local context; you may add well-known general knowledge, but do not invent specific statistics.
-3. Start with the section heading, e.g. `## {sec_title}`. Do NOT repeat the report's main title. Keep it focused (2-4 short paragraphs, lists/tables where useful).
-4. When the section presents numeric trends or comparisons AND you have concrete figures, include ONE chart by emitting a fenced code block tagged `chart` with JSON:
-```chart
-{{"type": "bar|line|pie", "title": "…", "labels": ["…", "…"], "values": [12.3, 45.6]}}
-```
-   Put it right after the paragraph discussing those numbers. Only use real numbers; at most one chart per section.
-5. Output raw markdown only (do not wrap the whole answer in a code fence)."""
-
-            # Write all sections CONCURRENTLY — far faster and more reliable than a
-            # long sequential stream. Bound concurrency to the section count.
-            sem = asyncio.Semaphore(min(len(sections), 6))
-
-            async def _write_section(idx: int, sec: dict) -> tuple[int, str, str]:
-                sec_title = sec.get("title", f"Section {idx+1}")
-                sec_desc = sec.get("description", "")
-                async with sem:
-                    resp = await section_llm.ainvoke([SystemMessage(content=_section_prompt(sec_title, sec_desc))])
-                text = (resp.content or "").strip()
-                if text.startswith("```"):
-                    text = re.sub(r"^```(?:markdown|md)?\n", "", text)
-                    text = re.sub(r"\n```$", "", text)
-                return idx, sec_title, text.strip()
-
-            yield {
-                "event": "status",
-                "data": json.dumps({"message": f"Writing {len(sections)} sections in parallel…"}, ensure_ascii=False),
-            }
-
-            tasks = [asyncio.create_task(_write_section(i, s)) for i, s in enumerate(sections)]
-            results: dict[int, str] = {}
-            done_count = 0
-            for coro in asyncio.as_completed(tasks):
-                idx, sec_title, text = await coro
-                results[idx] = text
-                done_count += 1
-                yield {
-                    "event": "section_complete",
-                    "data": json.dumps({"title": sec_title}, ensure_ascii=False),
-                }
-                yield {
-                    "event": "status",
-                    "data": json.dumps({"message": f"Completed {done_count}/{len(sections)}: {sec_title}"}, ensure_ascii=False),
-                }
+            body = final_state.get("final_markdown") or final_state.get("draft") or ""
+            web_sources = final_state.get("sources") or []
 
             # Embed charts sequentially (matplotlib/pyplot is not thread-safe).
             yield {
                 "event": "status",
                 "data": json.dumps({"message": "Rendering charts…"}, ensure_ascii=False),
             }
-            section_contents = []
-            for i in range(len(sections)):
-                md = results.get(i, "")
-                if "```chart" in md:
-                    md = await asyncio.to_thread(_embed_charts, md)
-                section_contents.append(md)
+            if "```chart" in body:
+                body = await asyncio.to_thread(_embed_charts, body)
 
-            # Append a Sources section listing the web references used.
+            # Append a Sources section listing the web references the Researcher used.
             if web_sources:
                 lines = ["## Kaynaklar / Sources"]
                 for i, s in enumerate(web_sources, 1):
                     t = s.get("title") or s.get("url") or f"Source {i}"
                     u = s.get("url") or ""
                     lines.append(f"{i}. [{t}]({u})" if u else f"{i}. {t}")
-                section_contents.append("\n".join(lines))
+                body += "\n\n" + "\n".join(lines)
 
-            full_markdown = f"# {title}\n\n" + "\n\n".join(section_contents)
+            full_markdown = f"# {title}\n\n" + body
 
             # Write the markdown FIRST and signal completion so the report is
             # viewable immediately; the heavier reindex + PDF/DOCX + commit runs

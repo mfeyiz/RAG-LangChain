@@ -2,15 +2,92 @@
 
 Translates headings, lists, basic inline styling (bold, italic, underline, strike,
 highlight), inline code, external links, tables, and embeds local figures correctly.
+
+Every export is built on top of `templates/socradar_template.docx` so the SOCRadar
+cover watermark, header/footer and page geometry carry over automatically; only
+the body content is replaced. Heading and body runs are styled directly (rather
+than via the template's generic Heading styles) to match the brand look used in
+the template itself: Red Hat Display ExtraBold headings in coral, Inter body copy
+in dark gray.
 """
 from pathlib import Path
 import markdown as md_lib
 from bs4 import BeautifulSoup
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_COLOR_INDEX
+from docx.oxml.ns import qn
 
 from RAG.services import paths
+
+_TEMPLATE_DOCX = Path(__file__).resolve().parent / "templates" / "socradar_template.docx"
+
+# Brand colours sampled from SOCRadar Template.docx (cover watermark + heading runs).
+_BRAND_ACCENT = RGBColor(0xFF, 0x45, 0x62)   # coral — heading colour in the template
+_BRAND_NAVY = RGBColor(0x19, 0x19, 0x38)     # deep navy from the cover banner
+_BRAND_TEXT = RGBColor(0x43, 0x43, 0x43)     # body copy gray used in the template
+_BRAND_MUTED = RGBColor(0x66, 0x66, 0x66)
+
+_HEADING_FONT = "Red Hat Display ExtraBold"
+_BODY_FONT = "Inter"
+
+# Point sizes per heading level, descending — matches the template's own
+# heading/subheading proportions (its "Header" ~19pt down to "Header 2" ~13pt).
+_HEADING_SIZES = {1: 22, 2: 17, 3: 14, 4: 12, 5: 11, 6: 11}
+
+
+def _new_document() -> Document:
+    """Start from the SOCRadar template (keeps its watermark header/footer/page
+    geometry) with the placeholder body content stripped out, falling back to a
+    blank document if the template is missing."""
+    if _TEMPLATE_DOCX.exists():
+        doc = Document(str(_TEMPLATE_DOCX))
+        body = doc.element.body
+        for child in list(body):
+            if child.tag != qn("w:sectPr"):
+                body.remove(child)
+        return doc
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = _BODY_FONT
+    style.font.size = Pt(11)
+    style.font.color.rgb = _BRAND_TEXT
+    return doc
+
+
+def _style_heading_run(run, level: int):
+    run.font.name = _HEADING_FONT
+    run.font.size = Pt(_HEADING_SIZES.get(level, 11))
+    run.font.color.rgb = _BRAND_ACCENT
+    run.font.bold = False  # the ExtraBold weight is baked into the font itself
+
+
+def _style_body_run(run):
+    if not run.font.name:
+        run.font.name = _BODY_FONT
+    if run.font.color.rgb is None:
+        run.font.color.rgb = _BRAND_TEXT
+
+
+def _shade_cell(cell, hex_color: str):
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = tcPr.makeelement(qn("w:shd"), {qn("w:val"): "clear", qn("w:color"): "auto", qn("w:fill"): hex_color})
+    tcPr.append(shd)
+
+
+def _set_table_borders(table, hex_color: str = "D9B3B9"):
+    """Draw plain grid borders directly (the SOCRadar template has no built-in
+    'Table Grid' style since it ships with zero tables)."""
+    tblPr = table._tbl.tblPr
+    borders = tblPr.makeelement(qn("w:tblBorders"), {})
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = tblPr.makeelement(
+            qn(f"w:{edge}"),
+            {qn("w:val"): "single", qn("w:sz"): "4", qn("w:space"): "0", qn("w:color"): hex_color},
+        )
+        borders.append(el)
+    tblPr.append(borders)
 
 
 def render(source: str) -> Path:
@@ -28,13 +105,7 @@ def render(source: str) -> Path:
         extensions=["tables", "fenced_code", "toc", "sane_lists", "nl2br"],
     )
 
-    doc = Document()
-    
-    # Configure default styles briefly
-    style = doc.styles["Normal"]
-    font = style.font
-    font.name = "Calibri"
-    font.size = Pt(11)
+    doc = _new_document()
 
     soup = BeautifulSoup(html_body, "html.parser")
 
@@ -46,19 +117,43 @@ def render(source: str) -> Path:
         # Headings
         if el.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
             level = int(el.name[1])
-            doc.add_heading(el.text, level=level)
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(18 if level == 1 else 12)
+            p.paragraph_format.space_after = Pt(6)
+            run = p.add_run(el.text)
+            _style_heading_run(run, level)
+            if level == 1:
+                # Coral rule under H1s, echoing the template's section dividers.
+                p.paragraph_format.space_after = Pt(4)
+                pPr = p._p.get_or_add_pPr()
+                pBdr = pPr.makeelement(qn("w:pBdr"), {})
+                bottom = pPr.makeelement(
+                    qn("w:bottom"),
+                    {qn("w:val"): "single", qn("w:sz"): "6", qn("w:space"): "4", qn("w:color"): "FF4562"},
+                )
+                pBdr.append(bottom)
+                pPr.append(pBdr)
 
         # Paragraphs
         elif el.name == "p":
             p = doc.add_paragraph()
             _process_inline(p, el, source)
+            for run in p.runs:
+                _style_body_run(run)
 
-        # Lists (ul, ol)
+        # Lists (ul, ol) — the SOCRadar template ships with no List Bullet/Number
+        # styles (it has zero lists), so indent + a manual marker instead of
+        # relying on a named style that would raise KeyError.
         elif el.name in ("ul", "ol"):
-            list_style = "List Bullet" if el.name == "ul" else "List Number"
-            for li in el.find_all("li", recursive=False):
-                p = doc.add_paragraph(style=list_style)
+            for idx, li in enumerate(el.find_all("li", recursive=False), start=1):
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.3)
+                marker = "•  " if el.name == "ul" else f"{idx}.  "
+                marker_run = p.add_run(marker)
+                _style_body_run(marker_run)
                 _process_inline(p, li, source)
+                for run in p.runs:
+                    _style_body_run(run)
 
         # Blockquotes
         elif el.name == "blockquote":
@@ -67,6 +162,7 @@ def render(source: str) -> Path:
             _process_inline(p, el, source)
             # Make the blockquote italic
             for run in p.runs:
+                _style_body_run(run)
                 run.italic = True
 
         # Tables
@@ -74,7 +170,7 @@ def render(source: str) -> Path:
             rows = el.find_all("tr")
             if not rows:
                 continue
-            
+
             # Compute max columns
             max_cols = 1
             for row in rows:
@@ -83,13 +179,29 @@ def render(source: str) -> Path:
                     max_cols = cols
 
             table = doc.add_table(rows=len(rows), cols=max_cols)
-            table.style = "Table Grid"
+            _set_table_borders(table)
 
             for r_idx, row in enumerate(rows):
                 cells = row.find_all(["td", "th"])
+                is_header_row = r_idx == 0
                 for c_idx, cell in enumerate(cells):
-                    if c_idx < max_cols:
-                        table.cell(r_idx, c_idx).text = cell.text
+                    if c_idx >= max_cols:
+                        continue
+                    doc_cell = table.cell(r_idx, c_idx)
+                    doc_cell.text = cell.text
+                    for p in doc_cell.paragraphs:
+                        for run in p.runs:
+                            run.font.name = _BODY_FONT
+                            run.font.size = Pt(10)
+                            if is_header_row:
+                                run.font.bold = True
+                                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                            else:
+                                run.font.color.rgb = _BRAND_TEXT
+                    if is_header_row:
+                        _shade_cell(doc_cell, "FF4562")
+                    elif r_idx % 2 == 0:
+                        _shade_cell(doc_cell, "FFF4F6")  # pale coral zebra stripe
 
         # Fenced code/pre
         elif el.name == "pre":
@@ -125,15 +237,18 @@ def render(source: str) -> Path:
                 p_title = doc.add_paragraph()
                 p_title.alignment = 1  # Center
                 run_title = p_title.add_run(title_text)
-                run_title.bold = True
+                run_title.font.name = _HEADING_FONT
                 run_title.font.size = Pt(28)
+                run_title.font.color.rgb = _BRAND_ACCENT
 
                 if sub_text:
                     p_sub = doc.add_paragraph()
                     p_sub.alignment = 1
                     run_sub = p_sub.add_run(sub_text)
+                    run_sub.font.name = _BODY_FONT
                     run_sub.font.size = Pt(16)
                     run_sub.font.italic = True
+                    run_sub.font.color.rgb = _BRAND_MUTED
 
                 for _ in range(6):
                     doc.add_paragraph()
@@ -142,7 +257,9 @@ def render(source: str) -> Path:
                     p_meta = doc.add_paragraph()
                     p_meta.alignment = 1
                     run_meta = p_meta.add_run(meta_text)
+                    run_meta.font.name = _BODY_FONT
                     run_meta.font.size = Pt(11)
+                    run_meta.font.color.rgb = _BRAND_TEXT
 
                 doc.add_page_break()
             elif "report-chart-container" in classes:
@@ -158,10 +275,14 @@ def render(source: str) -> Path:
                 if val_text or lbl_text:
                     p = doc.add_paragraph()
                     run = p.add_run(f"★ {val_text} — {lbl_text}")
-                    run.bold = True
+                    run.font.name = _BODY_FONT
+                    run.font.bold = True
+                    run.font.color.rgb = _BRAND_ACCENT
             else:
                 p = doc.add_paragraph()
                 _process_inline(p, el, source)
+                for run in p.runs:
+                    _style_body_run(run)
 
     out_path = paths.workspace_docx_path(source)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,7 +321,7 @@ def _process_inline(p, el, source: str):
             # Render a blue/underlined text followed by the url
             run = p.add_run(child.text)
             run.font.underline = True
-            run.font.color.rgb = None  # standard blue/theme color is default
+            run.font.color.rgb = RGBColor(0x19, 0x19, 0x38)
             href = child.get("href", "")
             if href:
                 p.add_run(f" ({href})")

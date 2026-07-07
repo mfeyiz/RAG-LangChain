@@ -14,8 +14,19 @@ import json
 import re
 from pathlib import Path
 
-# Warm, on-brand palette matching the app's accent colours.
-_PALETTE = ["#c96442", "#e0a458", "#6b8f71", "#4f7cac", "#9b6a9e", "#c9a94b", "#7a9e9f", "#b5654a"]
+# SOCRadar brand palette — sampled from SOCRadar Template.docx (coral accent
+# #FF4562 and the deep navy cover-page banner #191938), extended with tints/
+# shades so multi-series charts stay legible while reading as one brand.
+_PALETTE = [
+    "#FF4562",  # brand coral (primary)
+    "#191938",  # brand navy
+    "#FF8CA0",  # coral tint
+    "#5C5C82",  # navy tint
+    "#B23350",  # coral shade
+    "#8C8CA8",  # navy tint (lighter)
+    "#434343",  # body-copy gray
+    "#FFC2CD",  # pale coral
+]
 
 # A fenced ```chart … ``` block (language tag "chart").
 CHART_BLOCK_RE = re.compile(r"```chart\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
