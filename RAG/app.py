@@ -6,6 +6,7 @@ import secrets
 import sys
 import os
 import time
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -21,6 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from RAG.agents.graph import create_graph
 from RAG.agents.report_graph import create_report_graph
 from RAG.services import users, vector_store
+from RAG.services import job_events, job_queue, jobs, report_jobs
 from RAG.services.auth import (
     authenticate_request,
     auth_configured,
@@ -71,6 +73,10 @@ async def lifespan(_app: FastAPI):
             # 2. Provision the auth user table and seed the bootstrap admin.
             await asyncio.to_thread(users.ensure_users_schema)
             await asyncio.to_thread(users.ensure_admin_seed)
+            # 2a. Provision the async job-queue table (report generation and
+            # future long-running jobs land here regardless of whether Kafka
+            # is available — see RAG/services/jobs.py).
+            await asyncio.to_thread(jobs.ensure_jobs_schema)
             # 2b. Initialise the workspace Git repo (best-effort; no-op if
             # GitPython / git is unavailable).
             await asyncio.to_thread(version_control.ensure_repo)
@@ -93,6 +99,7 @@ async def lifespan(_app: FastAPI):
     except Exception:
         pass
     await session_store.close()
+    await job_queue.close_producer()
 
 
 app = FastAPI(title="RAG Multi-Agent System", lifespan=lifespan)
@@ -955,11 +962,29 @@ class GenerateReportRequest(BaseModel):
     title: str
     topic: str
     template: str = "business-report"
+    language: str = "auto"          # "auto" | "Turkish" | "English" | ...
+    tone: str = ""                  # e.g. "professional", "concise"
+    audience: str = ""              # e.g. "executives", "engineers"
+    length: str = "standard"        # "brief" | "standard" | "detailed"
+    sections: list | None = None    # optional caller-supplied outline [{title, description}]
+
+
+def _sse_event(event: str, data: dict) -> dict:
+    """Encode a plain {event, data} dict for EventSourceResponse. "done" keeps
+    the raw "[DONE]" sentinel some SSE consumers expect; every other event is
+    JSON-encoded."""
+    return {
+        "event": event,
+        "data": "[DONE]" if event == "done" else json.dumps(data, ensure_ascii=False),
+    }
 
 
 @app.post("/documents/generate")
 async def generate_report(body: GenerateReportRequest, request: Request):
-    """Generate a new report section-by-section using the document store and stream SSE progress."""
+    """Queue a report-generation job on Kafka and stream its progress back as
+    SSE. Falls back to running the report graph inline (today's synchronous
+    behavior) if Kafka — or the jobs table itself — is unavailable, so this
+    endpoint degrades gracefully rather than hard-failing."""
     auth = authenticate_request(request)
     if not auth.allowed:
         return JSONResponse({"error": auth.error}, status_code=401)
@@ -975,138 +1000,129 @@ async def generate_report(body: GenerateReportRequest, request: Request):
     if not topic:
         return JSONResponse({"error": "A report topic/instruction is required."}, status_code=400)
 
+    job_id = str(uuid.uuid4())
+    trace_id = new_trace_id()
+    payload = body.model_dump()
+
     async def event_generator():
-        from RAG.services import report_charts, report_registry
+        jobs.create_job(job_id, "report_generate", payload, trace_id)
 
-        trace_id = new_trace_id()
+        # Subscribe BEFORE enqueuing — Redis pub/sub has no backlog, so a late
+        # subscriber would miss whatever the worker publishes the instant it
+        # picks the job up (see job_events.py's module docstring).
+        pubsub = await job_events.open_subscription(job_id)
+        enqueued = await job_queue.enqueue("report_generate", payload, job_id, trace_id)
 
-        try:
-            # Reserve the report source now so charts can be written into its
-            # image folder once the draft is assembled.
-            source = _unique_workspace_source(title)
-            stem = paths.stem_of(source)
+        if enqueued and pubsub is not None:
+            async for item in job_events.iter_messages(pubsub):
+                yield _sse_event(item["event"], item.get("data", {}))
+            return
 
-            def _embed_charts(md: str) -> str:
-                """Replace ```chart JSON blocks with rendered PNG image links."""
-                imgdir = paths.workspace_images_dir(source)
+        if enqueued and pubsub is None:
+            # Job is queued and will run on a worker, but this pod can't reach
+            # Redis to bridge live progress — poll the jobs table instead.
+            async for item in _poll_job_progress(job_id):
+                yield _sse_event(item["event"], item.get("data", {}))
+            return
 
-                def repl(m):
-                    spec = report_charts.parse_spec(m.group(1))
-                    if not spec:
-                        return ""
-                    name = f"chart_{abs(hash(m.group(1))) % (10 ** 9)}.png"
-                    if report_charts.render_chart_spec(spec, imgdir / name):
-                        alt = str(spec.get("title") or "chart")
-                        return f"![{alt}](/images/workspace/{stem}/{name})"
-                    return ""
-
-                return report_charts.CHART_BLOCK_RE.sub(repl, md)
-
-            # Drive the multi-agent report graph. Node progress arrives on the
-            # "custom" stream (status / section_start / section_complete events);
-            # the final assembled state arrives on the "values" stream.
-            graph = request.app.state.report_graph
-            initial_state = {
-                "topic": topic,
-                "title": title,
-                "template": template,
-                "trace_id": trace_id,
-                "revision_count": 0,
-            }
-            final_state: dict = {}
-            async for mode, payload in graph.astream(
-                initial_state,
-                stream_mode=["custom", "values"],
-                config={"recursion_limit": 50},
-            ):
-                if mode == "custom":
-                    yield {
-                        "event": payload.get("event", "status"),
-                        "data": json.dumps(payload.get("data", {}), ensure_ascii=False),
-                    }
-                elif mode == "values":
-                    final_state = payload
-
-            body = final_state.get("final_markdown") or final_state.get("draft") or ""
-            web_sources = final_state.get("sources") or []
-
-            # Embed charts sequentially (matplotlib/pyplot is not thread-safe).
-            yield {
-                "event": "status",
-                "data": json.dumps({"message": "Rendering charts…"}, ensure_ascii=False),
-            }
-            if "```chart" in body:
-                body = await asyncio.to_thread(_embed_charts, body)
-
-            # Append a Sources section listing the web references the Researcher used.
-            if web_sources:
-                lines = ["## Kaynaklar / Sources"]
-                for i, s in enumerate(web_sources, 1):
-                    t = s.get("title") or s.get("url") or f"Source {i}"
-                    u = s.get("url") or ""
-                    lines.append(f"{i}. [{t}]({u})" if u else f"{i}. {t}")
-                body += "\n\n" + "\n".join(lines)
-
-            full_markdown = f"# {title}\n\n" + body
-
-            # Write the markdown FIRST and signal completion so the report is
-            # viewable immediately; the heavier reindex + PDF/DOCX + commit runs
-            # afterwards while the SSE connection stays open.
-            paths.workspace_md_path(source).write_text(full_markdown, encoding="utf-8")
-            report_registry.record(source, title, template, generated=True)
-
-            yield {
-                "event": "complete",
-                "data": json.dumps({"source": source, "markdown": full_markdown}, ensure_ascii=False),
-            }
-            yield {
-                "event": "status",
-                "data": json.dumps({"message": "Indexing & exporting…"}, ensure_ascii=False),
-            }
-            try:
-                await asyncio.to_thread(_index_and_export_workspace, source, "generate report")
-            except Exception as exc:
-                print(f"[generate] post-save index/export failed: {exc}")
-            yield {"event": "done", "data": "[DONE]"}
-
-        except Exception as e:
-            print(f"Report Generation Error: {e}")
-            import traceback
-            traceback.print_exc()
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": str(e)}, ensure_ascii=False),
-            }
+        # Kafka unavailable — run inline, exactly as before this feature. Mark
+        # the job "running" immediately (not just on completion) so a client
+        # disconnect mid-generation doesn't leave the row stuck at "queued"
+        # forever — it never actually reaches a worker in this path.
+        await job_events.close_subscription(pubsub)
+        jobs.mark_running(job_id)
+        report_graph = request.app.state.report_graph
+        async for item in report_jobs.run_report_job(
+            report_graph,
+            title=title, topic=topic, template=template, trace_id=trace_id,
+            language=body.language, tone=body.tone, audience=body.audience,
+            length=body.length, sections=body.sections,
+        ):
+            if item["event"] == "complete":
+                jobs.mark_done(job_id, item["data"])
+            elif item["event"] == "error":
+                jobs.mark_error(job_id, item["data"].get("error", "Generation error"))
+            yield _sse_event(item["event"], item.get("data", {}))
 
     return EventSourceResponse(event_generator())
 
 
-def _unique_workspace_source(title: str) -> str:
-    """Slugify `title` into a `<stem>.md` that doesn't collide with an existing
-    workspace document (suffixing -2, -3, … on conflict)."""
-    base_stem = paths.sanitize_stem(title)
-    stem = base_stem
-    n = 2
-    while paths.workspace_md_path(paths.source_for(stem)).exists():
-        stem = f"{base_stem}-{n}"
-        n += 1
-    return paths.source_for(stem)
+async def _poll_job_progress(job_id: str, interval: float = 2.0, timeout: float = 600.0):
+    """Fallback progress source when Kafka enqueued the job but no live Redis
+    bridge is available: poll the jobs table until it reaches a terminal
+    status, synthesizing the same event shapes the live bridge would emit."""
+    waited = 0.0
+    while waited < timeout:
+        row = jobs.get_job(job_id)
+        if row and row["status"] == "done":
+            result = row.get("result") or {}
+            yield {"event": "complete", "data": result}
+            yield {"event": "done", "data": {}}
+            return
+        if row and row["status"] == "error":
+            yield {"event": "error", "data": {"error": row.get("error") or "Generation error"}}
+            return
+        await asyncio.sleep(interval)
+        waited += interval
+    yield {"event": "error", "data": {"error": "Timed out waiting for job progress."}}
 
 
-def _index_and_export_workspace(source: str, commit_msg: str) -> str:
-    """Reindex a workspace source, regenerate PDF/DOCX (best-effort), commit."""
-    from RAG.services.document_manager import reindex_workspace_source
-    from RAG.agents.editor import _render_pdf_safe
-    from RAG.services.version_control import commit_change
+@app.get("/jobs/{job_id}")
+async def get_job_status(job_id: str, request: Request):
+    """Poll a job's current status/result — reconnect fallback for clients
+    that missed the live SSE stream (or never held one open)."""
+    auth = authenticate_request(request)
+    if not auth.allowed:
+        return JSONResponse({"error": auth.error}, status_code=401)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
 
-    reindex_workspace_source(source)
-    _render_pdf_safe(source)
-    try:
-        from RAG.services.docx_exporter import render as render_docx
-        render_docx(source)
-    except Exception as exc:
-        print(f"[app] DOCX generation failed for {source}: {exc}")
-    return commit_change(source, commit_msg)
+    row = jobs.get_job(job_id)
+    if row is None:
+        return JSONResponse({"error": "Job not found."}, status_code=404)
+    return row
+
+
+@app.get("/jobs/{job_id}/stream")
+async def stream_job_progress(job_id: str, request: Request):
+    """SSE reconnect endpoint — does NOT re-enqueue. If the job already
+    finished (this pod missed the live pub/sub window entirely, since Redis
+    pub/sub has no backlog), synthesize the terminal event from Postgres;
+    otherwise bridge live progress the same way the initial request does."""
+    auth = authenticate_request(request)
+    if not auth.allowed:
+        return JSONResponse({"error": auth.error}, status_code=401)
+    if not auth.is_admin:
+        return JSONResponse({"error": "Admin access required."}, status_code=403)
+
+    async def event_generator():
+        row = jobs.get_job(job_id)
+        if row is None:
+            yield _sse_event("error", {"error": "Job not found."})
+            return
+        if row["status"] == "done":
+            yield _sse_event("complete", row.get("result") or {})
+            yield _sse_event("done", {})
+            return
+        if row["status"] == "error":
+            yield _sse_event("error", {"error": row.get("error") or "Generation error"})
+            return
+
+        pubsub = await job_events.open_subscription(job_id)
+        if pubsub is not None:
+            async for item in job_events.iter_messages(pubsub):
+                yield _sse_event(item["event"], item.get("data", {}))
+            return
+        async for item in _poll_job_progress(job_id):
+            yield _sse_event(item["event"], item.get("data", {}))
+
+    return EventSourceResponse(event_generator())
+
+
+# Single implementation shared with the Kafka worker (RAG/worker.py) — see
+# RAG/services/report_jobs.py.
+_unique_workspace_source = report_jobs.unique_workspace_source
+_index_and_export_workspace = report_jobs.index_and_export_workspace
 
 
 class RenameReportRequest(BaseModel):

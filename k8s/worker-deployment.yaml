@@ -1,11 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rag-langchain
+  name: rag-worker
   namespace: rag-yeni
   labels:
-    app: rag-langchain
+    app: rag-worker
 spec:
+  # Start conservative. Scaling this to N replicas is safe (Kafka load-balances
+  # partitions across consumers in the "rag-workers" group) but CPU/mem-based
+  # HPA (like hpa.yaml uses for the API) is a poor fit for a consumer that's
+  # mostly idle-polling — consumer-lag-based autoscaling (e.g. via KEDA) is the
+  # right mechanism here and is explicit future work, not v1.
   replicas: 1
   strategy:
     type: RollingUpdate
@@ -14,19 +19,18 @@ spec:
       maxUnavailable: 1
   selector:
     matchLabels:
-      app: rag-langchain
+      app: rag-worker
   template:
     metadata:
       labels:
-        app: rag-langchain
+        app: rag-worker
     spec:
       securityContext:
         fsGroup: 1000
       affinity:
         podAffinity:
-          # Prefer the node where model-cache-pvc is already mounted (RWO
-          # allows multiple pods per node). "preferred" not "required" so the
-          # first pod of a rolling update can still schedule when no peer exists.
+          # Same rationale as deployment.yaml: prefer co-scheduling with the
+          # API pods so the shared rag-data-pvc (RWO) stays on one node.
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:
@@ -35,12 +39,11 @@ spec:
                     app: rag-langchain
                 topologyKey: kubernetes.io/hostname
       containers:
-        - name: rag-langchain
+        - name: rag-worker
           image: europe-west3-docker.pkg.dev/PROJECT_ID/rag-artifact-registery/rag-langchain:latest
           imagePullPolicy: IfNotPresent
-          ports:
-            - name: http
-              containerPort: 8000
+          # Same image as the API Deployment — only the entrypoint differs.
+          command: ["uv", "run", "--no-sync", "python", "-m", "RAG.worker"]
           env:
             - name: OPENROUTER_API_KEY
               valueFrom:
@@ -63,29 +66,17 @@ spec:
               value: "https://opencode.ai/zen/go/v1"
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "/var/secrets/google/google-credentials.json"
-            # Required by RAG/services/embeddings.py, documentai_parser.py, and
-            # the Vertex reranker (retrieval.py) — all read this via a hard
-            # os.environ[...] lookup with no default. Without it, startup
-            # indexing raises KeyError inside the background task, which is
-            # swallowed silently: the pod stays "Running/Ready" (/healthz does
-            # not check this) but /status never leaves phase="indexing" and the
-            # UI is stuck on "Indexing documents, please wait..." forever.
             - name: GOOGLE_CLOUD_PROJECT
               valueFrom:
                 secretKeyRef:
                   name: rag-langchain-secrets
                   key: GOOGLE_CLOUD_PROJECT
-            # Discovery Engine (Vertex reranker) requires the numeric project
-            # number, not the string project ID.
             - name: GOOGLE_CLOUD_PROJECT_NUMBER
               valueFrom:
                 secretKeyRef:
                   name: rag-langchain-secrets
                   key: GOOGLE_CLOUD_PROJECT_NUMBER
                   optional: true
-            # Defaults to "docling" (see converter.py) if unset, which is no
-            # longer a dependency (see pyproject.toml) — uploads would silently
-            # degrade to text-only conversion (no figures/images).
             - name: DOC_PARSER
               value: "documentai"
             - name: DOCAI_LOCATION
@@ -111,8 +102,6 @@ spec:
               value: /cache/sentence-transformers
             - name: REDIS_URL
               value: redis://redis:6379
-            - name: KAFKA_BOOTSTRAP_SERVERS
-              value: "kafka:9092"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -123,45 +112,25 @@ spec:
                 secretKeyRef:
                   name: rag-langchain-secrets
                   key: JWT_SECRET
-            - name: ADMIN_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: rag-langchain-secrets
-                  key: ADMIN_USERNAME
-                  optional: true
-            - name: ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: rag-langchain-secrets
-                  key: ADMIN_PASSWORD
-                  optional: true
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 60
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 40
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 600
-            periodSeconds: 30
-            timeoutSeconds: 5
+            # The worker only consumes Kafka jobs — it never serves auth
+            # endpoints, so ADMIN_USERNAME/PASSWORD aren't needed here.
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+          # No HTTP server in this process — rely on the consumer loop crashing
+          # (and k8s restarting the pod) on unrecoverable errors rather than a
+          # synthetic health check.
           resources:
             requests:
               cpu: "250m"
-              memory: "2Gi"
+              memory: "1Gi"
             limits:
               cpu: "1"
-              memory: "6Gi"
+              memory: "4Gi"
           volumeMounts:
             - name: model-cache
               mountPath: /cache
-            # User documents (originals + workspace markdown/pdf) and the BM25
-            # corpus files must survive restarts, so back them with a PVC.
+            # The worker writes generated reports (markdown/images/PDF/DOCX)
+            # to the same workspace the API serves from.
             - name: rag-data
               mountPath: /app/RAG/data
               subPath: data
