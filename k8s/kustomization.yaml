@@ -7,9 +7,11 @@ resources:
   - data-pvc.yaml
   - redis.yaml
   - postgres.yaml
+  - kafka.yaml
   - backendconfig.yaml
   - managed-certificate.yaml
   - deployment.yaml
+  - worker-deployment.yaml
   - service.yaml
   - ingress.yaml
   - hpa.yaml

@@ -21,6 +21,18 @@ from RAG.agents.supervisor import get_llm
 MAX_REVISIONS = int(os.getenv("REPORT_MAX_REVISIONS", "2"))
 MAX_SECTIONS = int(os.getenv("REPORT_MAX_SECTIONS", "6"))
 
+# length → (max sections, per-section token budget). Lets the caller trade off
+# depth vs. speed/cost from the Report Studio modal.
+_LENGTH_PROFILES = {
+    "brief":    (4, 450),
+    "standard": (MAX_SECTIONS, 800),
+    "detailed": (max(MAX_SECTIONS, 8), 1200),
+}
+
+
+def length_profile(length: str) -> tuple[int, int]:
+    return _LENGTH_PROFILES.get((length or "standard").lower(), _LENGTH_PROFILES["standard"])
+
 
 _TEMPLATE_FALLBACKS = {
     "research-summary": [
@@ -45,20 +57,44 @@ _TEMPLATE_FALLBACKS = {
         {"title": "Recommendations", "description": "Actionable recommendations"},
         {"title": "Conclusion", "description": "Summary and close"},
     ],
+    "threat-intelligence": [
+        {"title": "Executive Summary", "description": "Key takeaways for decision makers"},
+        {"title": "Threat Overview", "description": "The threat actor / campaign / vulnerability at a glance"},
+        {"title": "Technical Analysis", "description": "TTPs, IOCs, attack chain and affected systems"},
+        {"title": "Impact Assessment", "description": "Business and operational impact, affected assets"},
+        {"title": "Mitigation & Recommendations", "description": "Detection, response and hardening actions"},
+        {"title": "Conclusion", "description": "Summary and outlook"},
+    ],
+    "blank": [
+        {"title": "Introduction", "description": "Set the context and goals"},
+        {"title": "Overview", "description": "Main overview of the topic"},
+        {"title": "Analysis", "description": "Detailed analysis"},
+        {"title": "Conclusion", "description": "Summary and next steps"},
+    ],
 }
 
 
-def _outline_prompt(title: str, topic: str, template: str) -> str:
+def _outline_prompt(title: str, topic: str, template: str, max_sections: int,
+                    tone: str = "", audience: str = "", language: str = "") -> str:
+    hints = []
+    if tone:
+        hints.append(f"Tone: {tone}.")
+    if audience:
+        hints.append(f"Target audience: {audience}.")
+    if language and language.lower() not in ("auto", ""):
+        hints.append(f"Write the section titles/descriptions in {language}.")
+    hint_line = (" ".join(hints) + "\n") if hints else ""
     return f"""You are a professional report planner. Plan the outline for a report titled "{title}" on the topic: "{topic}".
 The report template chosen is "{template}".
-Based on this template, generate a list of section objects in JSON format.
+{hint_line}Based on this template, generate a list of at most {max_sections} section objects in JSON format.
 Each object must have "title" (the section heading) and "description" (a brief guide of what to write about, referencing specific aspects of the topic).
 
 Standard templates and their required sections:
 - business-report: Executive Summary, Background, Analysis, Key Metrics, Recommendations, Conclusion
 - research-summary: Abstract, Question, Findings, Discussion, References
 - project-status: Status Overview, Progress This Period, Upcoming, Risks & Blockers, Metrics
-- blank: Create 4-6 logical, well-structured sections appropriate for the topic.
+- threat-intelligence: Executive Summary, Threat Overview, Technical Analysis, Impact Assessment, Mitigation & Recommendations, Conclusion
+- blank: Create logical, well-structured sections appropriate for the topic.
 
 Return ONLY a valid JSON array of objects, containing no markdown code fences, no introductory or concluding text.
 Example:
@@ -75,9 +111,15 @@ async def _plan_outline(state: ReportState) -> list:
     title = state["title"]
     topic = state["topic"]
     template = state.get("template", "business-report")
+    max_sections, _ = length_profile(state.get("length", "standard"))
+    tone = state.get("tone", "")
+    audience = state.get("audience", "")
+    language = state.get("language", "")
 
     try:
-        resp = await llm.ainvoke([SystemMessage(content=_outline_prompt(title, topic, template))])
+        resp = await llm.ainvoke([SystemMessage(
+            content=_outline_prompt(title, topic, template, max_sections, tone, audience, language)
+        )])
         content = (resp.content or "").strip()
         if content.startswith("```"):
             content = re.sub(r"^```(?:json)?\n", "", content)
@@ -95,7 +137,7 @@ async def _plan_outline(state: ReportState) -> list:
         for i, s in enumerate(sections)
         if isinstance(s, dict)
     ]
-    return clean[:MAX_SECTIONS]
+    return clean[:max_sections]
 
 
 def route_report_supervisor(state: ReportState) -> str:

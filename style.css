@@ -2705,6 +2705,16 @@ body.cite-open .workspace {
     flex-direction: column;
     gap: 12px;
 }
+.ai-gen-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 12px;
+    margin-top: 10px;
+}
+.ai-gen-controls select,
+.ai-gen-controls input {
+    width: 100%;
+}
 .ai-gen-status-header {
     display: flex;
     align-items: center;
@@ -2749,6 +2759,12 @@ body.cite-open .workspace {
     color: var(--muted);
     line-height: 1.5;
     white-space: pre-wrap;
+}
+.ai-gen-log-line {
+    padding: 1px 0;
+}
+.ai-gen-log-line:last-child {
+    color: var(--text);
 }
 @keyframes spin {
     to { transform: rotate(360deg); }

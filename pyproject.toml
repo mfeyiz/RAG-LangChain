@@ -45,6 +45,9 @@ dependencies = [
     # Git-backed workspace version control: @update → commit, restore.
     "GitPython>=3.1.0",
     "python-docx>=1.1.2",
+    # Async job queue: report generation (and future long-running jobs) run on a
+    # worker process, decoupled from the request via Kafka.
+    "aiokafka>=0.11.0",
 ]
 
 [dependency-groups]

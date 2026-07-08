@@ -17,14 +17,22 @@ class ReportState(TypedDict, total=False):
     title: str                 # report title
     template: str              # "business-report" | "research-summary" | ...
     trace_id: str
+    # Optional caller controls (Report Studio "New report" modal):
+    language: str              # "auto" | "Turkish" | "English" | ...
+    tone: str                  # e.g. "professional" | "concise" | "persuasive"
+    audience: str              # e.g. "executives" | "engineers"
+    length: str                # "brief" | "standard" | "detailed"
+    section_max_tokens: int    # per-section token budget (derived from length)
 
     # ── Supervisor: plan ──
     outline: list              # [{"title": str, "description": str}, ...]
 
     # ── Researcher: evidence ──
-    # section_evidence[title] = {"context": <rag>, "web_context": <web>}
+    # section_evidence[title] = {"context", "web_context", "local_sources",
+    #   "figures", "web_sources", "sources_block"}
     section_evidence: dict
-    sources: list              # [{"title": str, "url": str}, ...] collected web refs
+    sources: list              # [{"title": str, "url": str}, ...] flat de-duped refs
+    references: list           # [{"n", "label", "url", "kind"}] numbered citations
     research_gaps: list        # section titles the reviewer wants re-researched
 
     # ── Writer: draft ──

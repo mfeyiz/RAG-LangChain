@@ -1,0 +1,67 @@
+# Local dev: a single Kafka broker (KRaft mode, no Zookeeper) so the async
+# job queue (RAG/services/job_queue.py, RAG/worker.py) can be exercised
+# end-to-end without k8s.
+#
+# Postgres and Redis are intentionally NOT included here — this repo's
+# existing local workflow already runs those outside Docker (see .env's
+# DATABASE_URL/REDIS_URL), and duplicating them here would just create a
+# second, conflicting set of ports/data. Only the new piece (Kafka) lives here.
+#
+# Usage:
+#   docker-compose up kafka
+#   # then, in separate terminals, on the host (not in Docker):
+#   #   KAFKA_BOOTSTRAP_SERVERS=localhost:9092 uv run uvicorn RAG.app:app --reload
+#   #   KAFKA_BOOTSTRAP_SERVERS=localhost:9092 uv run python -m RAG.worker
+#
+# If KAFKA_BOOTSTRAP_SERVERS is unset/blank in .env, the app degrades
+# gracefully and runs report generation inline, exactly as before this
+# feature — Kafka is fully optional for local dev.
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: rag-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      # Host processes (uv run on the machine, not in a container) reach this
+      # broker via localhost — unlike the k8s manifest, which advertises the
+      # in-cluster service DNS name instead.
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_NUM_PARTITIONS: "3"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    # Ephemeral by design — a local scratch queue. Add a named volume here if
+    # you need queued jobs to survive `docker-compose down`.
+
+  # Optional, commented out by default: fully-containerized app/worker for
+  # anyone who prefers not to run `uv run` on the host. Both build the same
+  # Dockerfile as production, differing only in the command override.
+  #
+  # app:
+  #   build: .
+  #   command: ["uv", "run", "--no-sync", "uvicorn", "RAG.app:app", "--host", "0.0.0.0", "--port", "8000"]
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  #   env_file: .env
+  #   depends_on:
+  #     - kafka
+  #
+  # worker:
+  #   build: .
+  #   command: ["uv", "run", "--no-sync", "python", "-m", "RAG.worker"]
+  #   environment:
+  #     KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  #   env_file: .env
+  #   depends_on:
+  #     - kafka
