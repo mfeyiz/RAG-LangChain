@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20260707c">
+    <link rel="stylesheet" href="style.css?v=20260708a">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
@@ -560,6 +560,11 @@
                         <span class="template-name">Project status</span>
                         <span class="template-desc">Status, risks, metrics</span>
                     </button>
+                    <button class="template-card" data-template="threat-intelligence" type="button">
+                        <span class="material-symbols-outlined">security</span>
+                        <span class="template-name">Threat intel</span>
+                        <span class="template-desc">Threat, TTPs, mitigation</span>
+                    </button>
                 </div>
 
                 <div class="ai-gen-toggle-wrap">
@@ -574,6 +579,38 @@
                         <span>Topic / Instructions</span>
                         <textarea id="newReportAIPrompt" rows="3" placeholder="Describe the topics this report should cover. The AI will retrieve facts from your uploaded documents to draft the content."></textarea>
                     </label>
+                    <div class="ai-gen-controls">
+                        <label class="cb-field cb-field-col">
+                            <span>Length</span>
+                            <select id="aiGenLength">
+                                <option value="brief">Brief</option>
+                                <option value="standard" selected>Standard</option>
+                                <option value="detailed">Detailed</option>
+                            </select>
+                        </label>
+                        <label class="cb-field cb-field-col">
+                            <span>Language</span>
+                            <select id="aiGenLanguage">
+                                <option value="auto" selected>Auto (match topic)</option>
+                                <option value="Turkish">Türkçe</option>
+                                <option value="English">English</option>
+                            </select>
+                        </label>
+                        <label class="cb-field cb-field-col">
+                            <span>Tone</span>
+                            <select id="aiGenTone">
+                                <option value="" selected>Default</option>
+                                <option value="professional">Professional</option>
+                                <option value="concise">Concise</option>
+                                <option value="persuasive">Persuasive</option>
+                                <option value="technical">Technical</option>
+                            </select>
+                        </label>
+                        <label class="cb-field cb-field-col">
+                            <span>Audience</span>
+                            <input type="text" id="aiGenAudience" placeholder="e.g. executives">
+                        </label>
+                    </div>
                 </div>
 
                 <div class="ai-gen-status-wrap" id="aiGenStatusWrap" hidden>
@@ -759,6 +796,6 @@
         </button>
     </div>
 
-    <script src="script.js?v=20260707c"></script>
+    <script src="script.js?v=20260708a"></script>
 </body>
 </html>

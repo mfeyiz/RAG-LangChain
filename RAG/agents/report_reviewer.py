@@ -60,16 +60,33 @@ def _parse_review(content: str) -> dict:
         }
 
 
+_EVIDENCE_SNIPPET_CHARS = 600
+_MAX_DIGEST_SOURCES = 12
+
+
 def _evidence_digest(state: ReportState) -> str:
     outline = state.get("outline", [])
-    sources = state.get("sources") or []
+    references = state.get("references") or []
+    evidence_map = state.get("section_evidence") or {}
     lines = ["Planned sections: " + ", ".join(s["title"] for s in outline)]
-    if sources:
-        lines.append("Available sources:")
-        for i, s in enumerate(sources[:12], 1):
-            lines.append(f"  {i}. {s.get('title', '')} — {s.get('url', '')}")
+
+    if references:
+        lines.append("\nAvailable sources:")
+        for r in references[:_MAX_DIGEST_SOURCES]:
+            lines.append(f"  [{r.get('n')}] {r.get('label', '')} {('— ' + r['url']) if r.get('url') else ''}".rstrip())
     else:
         lines.append("Available sources: (none — local documents / general knowledge only)")
+
+    # Give the reviewer the ACTUAL evidence text so it can verify claims, not just
+    # the source list. Truncated per section to keep the prompt bounded.
+    lines.append("\nSection evidence (truncated):")
+    for sec in outline:
+        ev = evidence_map.get(sec["title"]) or {}
+        snippet = (ev.get("context") or ev.get("web_context") or "").strip()
+        if snippet:
+            lines.append(f"\n### {sec['title']}\n{snippet[:_EVIDENCE_SNIPPET_CHARS]}")
+        else:
+            lines.append(f"\n### {sec['title']}\n(no evidence gathered)")
     return "\n".join(lines)
 
 

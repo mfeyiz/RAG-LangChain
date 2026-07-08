@@ -88,11 +88,45 @@ _PROJECT_STATUS = """# {title}
 _Insert a chart of the relevant metrics from the tools panel._
 """
 
+_THREAT_INTELLIGENCE = """# {title}
+
+## Executive Summary
+
+_Key takeaways for decision makers._
+
+## Threat Overview
+
+_The threat actor / campaign / vulnerability at a glance._
+
+## Technical Analysis
+
+_TTPs, IOCs, attack chain and affected systems._
+
+| Indicator | Type | Notes |
+| --- | --- | --- |
+|  |  |  |
+
+## Impact Assessment
+
+_Business and operational impact; affected assets._
+
+## Mitigation & Recommendations
+
+- _Detection_
+- _Response_
+- _Hardening_
+
+## Conclusion
+
+_Summary and outlook._
+"""
+
 TEMPLATES = {
     "blank": _BLANK,
     "business-report": _BUSINESS_REPORT,
     "research-summary": _RESEARCH_SUMMARY,
     "project-status": _PROJECT_STATUS,
+    "threat-intelligence": _THREAT_INTELLIGENCE,
 }
 
 

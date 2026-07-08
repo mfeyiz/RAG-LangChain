@@ -15,7 +15,7 @@ import markdown as md_lib
 from bs4 import BeautifulSoup
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_COLOR_INDEX
+from docx.enum.text import WD_COLOR_INDEX, WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 from RAG.services import paths
@@ -88,6 +88,45 @@ def _set_table_borders(table, hex_color: str = "D9B3B9"):
         )
         borders.append(el)
     tblPr.append(borders)
+
+
+def _add_horizontal_rule(doc, hex_color: str = "D9B3B9"):
+    """Add a real horizontal rule as a paragraph bottom border (not literal text)."""
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    pBdr = pPr.makeelement(qn("w:pBdr"), {})
+    bottom = pBdr.makeelement(
+        qn("w:bottom"),
+        {qn("w:val"): "single", qn("w:sz"): "8", qn("w:space"): "1", qn("w:color"): hex_color},
+    )
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+    return p
+
+
+def _add_kpi_card(doc, value: str, label: str):
+    """Render a KPI as a real bordered, pale-coral single cell (value + label)."""
+    table = doc.add_table(rows=1, cols=1)
+    _set_table_borders(table, "FF4562")
+    cell = table.rows[0].cells[0]
+    _shade_cell(cell, "FFF0F2")  # very pale coral
+    cell.paragraphs[0].clear()
+
+    p_val = cell.paragraphs[0]
+    p_val.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_val = p_val.add_run(value or "")
+    run_val.font.name = _HEADING_FONT
+    run_val.font.size = Pt(20)
+    run_val.font.color.rgb = _BRAND_ACCENT
+
+    if label:
+        p_lbl = cell.add_paragraph()
+        p_lbl.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_lbl = p_lbl.add_run(label)
+        run_lbl.font.name = _BODY_FONT
+        run_lbl.font.size = Pt(10)
+        run_lbl.font.color.rgb = _BRAND_MUTED
+    return table
 
 
 def render(source: str) -> Path:
@@ -216,7 +255,7 @@ def render(source: str) -> Path:
 
         # Horizontal rules
         elif el.name == "hr":
-            doc.add_paragraph("---")
+            _add_horizontal_rule(doc)
 
         # Div elements (cover-page, page-break, chart, KPI card, TOC)
         elif el.name == "div":
@@ -236,7 +275,7 @@ def render(source: str) -> Path:
                     doc.add_paragraph()
 
                 p_title = doc.add_paragraph()
-                p_title.alignment = 1  # Center
+                p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run_title = p_title.add_run(title_text)
                 run_title.font.name = _HEADING_FONT
                 run_title.font.size = Pt(28)
@@ -244,7 +283,7 @@ def render(source: str) -> Path:
 
                 if sub_text:
                     p_sub = doc.add_paragraph()
-                    p_sub.alignment = 1
+                    p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run_sub = p_sub.add_run(sub_text)
                     run_sub.font.name = _BODY_FONT
                     run_sub.font.size = Pt(16)
@@ -256,7 +295,7 @@ def render(source: str) -> Path:
 
                 if meta_text:
                     p_meta = doc.add_paragraph()
-                    p_meta.alignment = 1
+                    p_meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run_meta = p_meta.add_run(meta_text)
                     run_meta.font.name = _BODY_FONT
                     run_meta.font.size = Pt(11)
@@ -274,11 +313,7 @@ def render(source: str) -> Path:
                 val_text = val_el.text.strip() if val_el else ""
                 lbl_text = lbl_el.text.strip() if lbl_el else ""
                 if val_text or lbl_text:
-                    p = doc.add_paragraph()
-                    run = p.add_run(f"★ {val_text} — {lbl_text}")
-                    run.font.name = _BODY_FONT
-                    run.font.bold = True
-                    run.font.color.rgb = _BRAND_ACCENT
+                    _add_kpi_card(doc, val_text, lbl_text)
             else:
                 p = doc.add_paragraph()
                 _process_inline(p, el, source)

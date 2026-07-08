@@ -3116,8 +3116,14 @@ async function createNewReport() {
         if (aiGenerationSubmitting) return;
         aiGenerationSubmitting = true;
         newReportCreate.disabled = true;
+        const opts = {
+            length: (document.getElementById("aiGenLength") || {}).value || "standard",
+            language: (document.getElementById("aiGenLanguage") || {}).value || "auto",
+            tone: (document.getElementById("aiGenTone") || {}).value || "",
+            audience: ((document.getElementById("aiGenAudience") || {}).value || "").trim(),
+        };
         try {
-            await createNewReportAI(title, topic, selectedTemplate);
+            await createNewReportAI(title, topic, selectedTemplate, opts);
         } finally {
             aiGenerationSubmitting = false;
             newReportCreate.disabled = false;
@@ -3177,13 +3183,19 @@ function showToast(message, { type = "success", onClick = null, duration = 6000 
     setTimeout(dismiss, duration);
 }
 
-async function createNewReportAI(title, topic, template) {
+async function createNewReportAI(title, topic, template, opts = {}) {
     let res;
     try {
         res = await fetch("/documents/generate", {
             method: "POST",
             headers: authHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ title, topic, template })
+            body: JSON.stringify({
+                title, topic, template,
+                length: opts.length || "standard",
+                language: opts.language || "auto",
+                tone: opts.tone || "",
+                audience: opts.audience || "",
+            })
         });
     } catch (err) {
         newReportStatus.textContent = err.message || "Could not reach the server.";
@@ -3200,22 +3212,47 @@ async function createNewReportAI(title, topic, template) {
         return;
     }
 
-    // The request is accepted and the graph is running server-side — close the
-    // modal now and keep generating in the background; a toast reports the
-    // outcome so the user is free to keep working in the meantime.
-    closeNewReportModal();
-    if (newReportUseAI) newReportUseAI.checked = false;
+    // Request accepted and the graph is running server-side. Switch the modal
+    // into live-progress mode: hide the prompt/actions, reveal the progress
+    // panel, and stream the graph's status / section events into it. The user
+    // may close the modal to keep it running in the background (a toast reports
+    // the outcome), but by default they watch it build section by section.
     if (aiGenPromptWrap) aiGenPromptWrap.hidden = true;
-    if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
-    if (newReportActions) newReportActions.hidden = false;
-    if (newReportCreate) {
-        newReportCreate.innerHTML = `<span class="material-symbols-outlined">note_add</span> Create report`;
-    }
+    if (newReportActions) newReportActions.hidden = true;
+    if (newReportStatus) newReportStatus.hidden = true;
+    _resetAiGenProgress();
+    if (aiGenStatusWrap) aiGenStatusWrap.hidden = false;
 
-    runReportGenerationInBackground(res, title);
+    await runReportGeneration(res, title);
 }
 
-async function runReportGenerationInBackground(res, title) {
+/* ── AI report generation progress helpers ──────────────────────── */
+function _resetAiGenProgress() {
+    if (aiGenStatusText) aiGenStatusText.textContent = "Planning outline…";
+    if (aiGenProgressFill) aiGenProgressFill.style.width = "0%";
+    if (aiGenLogs) aiGenLogs.innerHTML = "";
+}
+
+function _appendAiGenLog(message) {
+    if (!aiGenLogs) return;
+    const line = document.createElement("div");
+    line.className = "ai-gen-log-line";
+    line.textContent = message;
+    aiGenLogs.appendChild(line);
+    aiGenLogs.scrollTop = aiGenLogs.scrollHeight;
+}
+
+function _setAiGenProgress(done, total) {
+    if (!aiGenProgressFill || !total) return;
+    // Cap at 95% until the `complete` event so the bar never reads "done" early.
+    const pct = Math.min(95, Math.round((Math.min(done, total) / total) * 100));
+    aiGenProgressFill.style.width = `${pct}%`;
+}
+
+async function runReportGeneration(res, title) {
+    let sectionsTotal = 0;
+    let sectionsDone = 0;
+    let finished = false;
     try {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -3245,22 +3282,65 @@ async function runReportGenerationInBackground(res, title) {
                     }
                 }
 
-                if (event === "complete") {
-                    const payload = JSON.parse(data);
+                let payload = {};
+                try { payload = data ? JSON.parse(data) : {}; } catch { payload = {}; }
+
+                if (event === "status") {
+                    if (payload.message && aiGenStatusText) aiGenStatusText.textContent = payload.message;
+                    if (payload.message) _appendAiGenLog(payload.message);
+                } else if (event === "section_start") {
+                    sectionsTotal += 1;
+                    if (payload.title) _appendAiGenLog(`• ${payload.title}`);
+                    if (aiGenStatusText) aiGenStatusText.textContent = `Outline: ${sectionsTotal} section(s)…`;
+                } else if (event === "section_complete") {
+                    sectionsDone += 1;
+                    if (payload.title) _appendAiGenLog(`✓ ${payload.title}`);
+                    _setAiGenProgress(sectionsDone, sectionsTotal);
+                    if (aiGenStatusText) {
+                        aiGenStatusText.textContent = `Writing sections… (${Math.min(sectionsDone, sectionsTotal)}/${sectionsTotal})`;
+                    }
+                } else if (event === "complete") {
+                    finished = true;
+                    if (aiGenProgressFill) aiGenProgressFill.style.width = "100%";
+                    if (aiGenStatusText) aiGenStatusText.textContent = "Report ready.";
+                    closeNewReportModal();
+                    _resetNewReportModalUI();
                     showToast(`Report generated: "${title}"`, {
                         type: "success",
                         onClick: () => selectEditorDoc(payload.source),
                     });
                     await loadEditorFileList();
+                    if (payload.source) await selectEditorDoc(payload.source);
                     return;
                 } else if (event === "error") {
-                    const payload = JSON.parse(data);
                     throw new Error(payload.error || "Generation error");
                 }
             }
         }
+        if (!finished) throw new Error("Stream ended before the report was ready.");
     } catch (err) {
+        // If the modal is still open, surface the error inline; otherwise toast.
+        if (newReportModal && !newReportModal.hidden) {
+            if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
+            if (newReportActions) newReportActions.hidden = false;
+            if (newReportStatus) {
+                newReportStatus.textContent = `Generation failed — ${err.message}`;
+                newReportStatus.className = "new-report-status error";
+                newReportStatus.hidden = false;
+            }
+        }
         showToast(`Report generation failed: "${title}" — ${err.message}`, { type: "error", duration: 8000 });
+    }
+}
+
+function _resetNewReportModalUI() {
+    if (newReportUseAI) newReportUseAI.checked = false;
+    if (aiGenPromptWrap) aiGenPromptWrap.hidden = true;
+    if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
+    if (newReportActions) newReportActions.hidden = false;
+    if (newReportStatus) newReportStatus.hidden = true;
+    if (newReportCreate) {
+        newReportCreate.innerHTML = `<span class="material-symbols-outlined">note_add</span> Create report`;
     }
 }
 

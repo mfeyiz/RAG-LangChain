@@ -44,6 +44,8 @@ def render_chart_spec(spec: dict, out_path: Path) -> bool:
 
     ctype = str(spec.get("type") or "bar").lower()
     title = str(spec.get("title") or "")
+    xlabel = str(spec.get("xlabel") or "")
+    ylabel = str(spec.get("ylabel") or "")
     labels = [str(x) for x in (spec.get("labels") or [])]
     try:
         values = [float(v) for v in (spec.get("values") or [])]
@@ -59,6 +61,18 @@ def render_chart_spec(spec: dict, out_path: Path) -> bool:
             wedge = {"width": 0.45} if ctype == "doughnut" else {}
             ax.pie(values, labels=labels, autopct="%1.1f%%", colors=colors, wedgeprops=wedge)
             ax.axis("equal")
+        elif ctype == "radar":
+            import numpy as np
+            n = len(values)
+            angles = [i / n * 2 * np.pi for i in range(n)]
+            angles += angles[:1]
+            data = values + values[:1]
+            ax.remove()
+            ax = fig.add_subplot(111, polar=True)
+            ax.plot(angles, data, color=_PALETTE[0], linewidth=2)
+            ax.fill(angles, data, color=_PALETTE[0], alpha=0.15)
+            ax.set_xticks(angles[:-1])
+            ax.set_xticklabels(labels)
         elif ctype == "line" or ctype == "area":
             ax.plot(labels, values, marker="o", color=_PALETTE[0], linewidth=2)
             if ctype == "area":
@@ -69,7 +83,11 @@ def render_chart_spec(spec: dict, out_path: Path) -> bool:
             ax.grid(axis="y", alpha=0.3)
         if title:
             ax.set_title(title, fontsize=13, fontweight="bold")
-        if ctype not in ("pie", "doughnut"):
+        if ctype not in ("pie", "doughnut", "radar"):
+            if xlabel:
+                ax.set_xlabel(xlabel, fontsize=10)
+            if ylabel:
+                ax.set_ylabel(ylabel, fontsize=10)
             fig.autofmt_xdate(rotation=25)
         fig.tight_layout()
         out_path.parent.mkdir(parents=True, exist_ok=True)
