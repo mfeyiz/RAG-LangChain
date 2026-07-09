@@ -3,7 +3,6 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - model-cache-pvc.yaml
-  - redis-pvc.yaml
   - data-pvc.yaml
   - redis.yaml
   - postgres.yaml

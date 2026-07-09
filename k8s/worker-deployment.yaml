@@ -6,12 +6,13 @@ metadata:
   labels:
     app: rag-worker
 spec:
-  # Start conservative. Scaling this to N replicas is safe (Kafka load-balances
-  # partitions across consumers in the "rag-workers" group) but CPU/mem-based
-  # HPA (like hpa.yaml uses for the API) is a poor fit for a consumer that's
-  # mostly idle-polling — consumer-lag-based autoscaling (e.g. via KEDA) is the
-  # right mechanism here and is explicit future work, not v1.
-  replicas: 1
+  # Scaling this to N replicas is safe (Kafka load-balances partitions across
+  # consumers in the "rag-workers" group) but CPU/mem-based HPA (like hpa.yaml
+  # uses for the API) is a poor fit for a consumer that's mostly idle-polling —
+  # consumer-lag-based autoscaling (e.g. via KEDA) is the right mechanism here
+  # and is explicit future work, not v1. Fixed at 3 for now (see KAFKA_NUM_PARTITIONS
+  # in kafka.yaml — 3 partitions means a 4th consumer in this group would sit idle).
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:

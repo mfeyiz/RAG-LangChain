@@ -1,3 +1,95 @@
+# Real Postgres streaming replication, hand-rolled (no operator/Patroni):
+#   - postgres-0 is always the primary. On its first boot (empty PGDATA) the
+#     stock image runs initdb, then our docker-entrypoint-initdb.d scripts
+#     create a "replicator" role and open pg_hba.conf for replication
+#     connections from the other pods.
+#   - postgres-1 / postgres-2 are standbys. Before the main container starts,
+#     an initContainer clones the primary with `pg_basebackup -R` (only when
+#     their own PGDATA is still empty) which also writes standby.signal +
+#     primary_conninfo — so the main container's normal entrypoint just finds
+#     a populated PGDATA and starts Postgres straight into recovery/standby
+#     mode, no initdb.
+#   - The "postgres" Service (what DATABASE_URL points at) selects only the
+#     pod literally named postgres-0 via the built-in
+#     `statefulset.kubernetes.io/pod-name` label, so it's always the primary —
+#     app code needs no read/write splitting.
+#
+# Caveats (explicit, not silently swept under the rug):
+#   - Failover is MANUAL. If postgres-0 dies, k8s restarts a pod with that same
+#     name/identity against the SAME PVC, so it comes back as the primary
+#     automatically — this protects against pod crashes/restarts. It does NOT
+#     protect against the postgres-0 PVC/node being lost; promoting a standby
+#     in that case is a manual `pg_ctl promote` + repointing the Service, not
+#     automatic (that needs Patroni/repmgr, out of scope here).
+#   - Reads are not load-balanced across standbys — only the primary is ever
+#     queried, since the app has no primary/replica-aware routing. The
+#     standbys currently exist for redundancy/failover, not read scaling.
+#
+# DEPLOY STEP THIS CANNOT DO FOR YOU — REQUIRED ONE-TIME MANUAL ACTION:
+#   docker-entrypoint-initdb.d scripts only run when a Postgres data directory
+#   is initialized from scratch. Your existing postgres-0 already has real
+#   data (documents/users/feedback) and is NOT empty, so on first apply of
+#   this manifest it will start normally but WITHOUT the replicator role or
+#   the pg_hba.conf replication line — postgres-1/-2 will crash-loop in their
+#   initContainer (pg_basebackup auth failure) until you run, once, against
+#   the existing primary:
+#     kubectl exec -n rag-yeni postgres-0 -- psql -U rag -d rag -c \
+#       "CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '<POSTGRES_REPLICATION_PASSWORD value>';"
+#     kubectl exec -n rag-yeni postgres-0 -- bash -c \
+#       'echo "host replication replicator all md5" >> /var/lib/postgresql/data/pgdata/pg_hba.conf'
+#     kubectl exec -n rag-yeni postgres-0 -- pg_ctl reload -D /var/lib/postgresql/data/pgdata
+#   A brand-new/empty deployment doesn't need this — the initdb scripts do it
+#   automatically.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-primary-initdb
+  namespace: rag-yeni
+data:
+  01-create-replicator-role.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'replicator') THEN
+          CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '${POSTGRES_REPLICATION_PASSWORD}';
+        END IF;
+      END
+      \$\$;
+    "
+  02-allow-replication-connections.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    echo "host replication replicator all md5" >> "$PGDATA/pg_hba.conf"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-replica-init
+  namespace: rag-yeni
+data:
+  init-replica.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    ordinal="${HOSTNAME##*-}"
+    if [ "$ordinal" = "0" ]; then
+      echo "postgres-0 is the primary — nothing to clone, the main entrypoint's initdb handles it."
+      exit 0
+    fi
+    if [ -s "$PGDATA/PG_VERSION" ]; then
+      echo "PGDATA already populated (existing standby or a previous clone) — skipping pg_basebackup."
+      exit 0
+    fi
+    until pg_isready -h postgres-0.postgres-headless -p 5432 -U "$POSTGRES_USER"; do
+      echo "Waiting for postgres-0 (primary) to accept connections..."
+      sleep 2
+    done
+    echo "Cloning from postgres-0 via pg_basebackup..."
+    PGPASSWORD="$POSTGRES_REPLICATION_PASSWORD" pg_basebackup \
+      -h postgres-0.postgres-headless -p 5432 -U replicator \
+      -D "$PGDATA" -Fp -Xs -P -R
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -6,8 +98,8 @@ metadata:
   labels:
     app: postgres
 spec:
-  serviceName: postgres
-  replicas: 1
+  serviceName: postgres-headless
+  replicas: 3
   selector:
     matchLabels:
       app: postgres
@@ -16,6 +108,25 @@ spec:
       labels:
         app: postgres
     spec:
+      initContainers:
+        - name: init-replica
+          image: pgvector/pgvector:pg16
+          command: ["bash", "/scripts/init-replica.sh"]
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              value: rag
+            - name: POSTGRES_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: replica-init-script
+              mountPath: /scripts
       containers:
         - name: postgres
           # pgvector ships the vector extension preinstalled on top of Postgres 16.
@@ -33,6 +144,11 @@ spec:
                 secretKeyRef:
                   name: rag-langchain-secrets
                   key: POSTGRES_PASSWORD
+            - name: POSTGRES_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rag-langchain-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
             # Keep PGDATA in a subdirectory so the volume's lost+found doesn't
             # collide with initdb on the first boot.
             - name: PGDATA
@@ -58,6 +174,17 @@ spec:
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+            - name: primary-initdb-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: replica-init-script
+          configMap:
+            name: postgres-replica-init
+            defaultMode: 0755
+        - name: primary-initdb-scripts
+          configMap:
+            name: postgres-primary-initdb
+            defaultMode: 0755
   volumeClaimTemplates:
     - metadata:
         name: postgres-data
@@ -69,6 +196,26 @@ spec:
             storage: 10Gi
         storageClassName: standard-rwo
 ---
+# Headless service required by the StatefulSet for stable per-pod DNS
+# (postgres-0.postgres-headless, postgres-1.postgres-headless, ...) — used by
+# standbys to find the primary for pg_basebackup/streaming replication.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: rag-yeni
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+# App-facing service. Selects only the pod named "postgres-0" (via the label
+# the StatefulSet controller sets automatically) so it always points at the
+# primary, whichever physical pod currently holds that identity.
 apiVersion: v1
 kind: Service
 metadata:
@@ -77,6 +224,7 @@ metadata:
 spec:
   selector:
     app: postgres
+    statefulset.kubernetes.io/pod-name: postgres-0
   ports:
     - name: postgres
       port: 5432

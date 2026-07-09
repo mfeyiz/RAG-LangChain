@@ -1,10 +1,20 @@
+# WARNING: this is 3 independent, non-clustered redis-stack-server instances,
+# each with its own PVC and no replication between them. The "redis" Service
+# below round-robins connections across all 3 pods, so a session's checkpoint
+# (RAG/services/session_store.py, the /ask graph's AsyncRedisSaver) can be
+# written to one pod and read back from another, empty one. This setup is for
+# replica-count/restart-resilience testing only — it is NOT safe for the app's
+# actual session/checkpoint consistency until real Redis Cluster or
+# Sentinel-based replication is configured. Scale back to 1 replica (or add
+# clustering) before relying on this for anything but a load test.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
   namespace: rag-yeni
 spec:
-  replicas: 1
+  serviceName: redis-headless
+  replicas: 3
   selector:
     matchLabels:
       app: redis
@@ -39,11 +49,35 @@ spec:
           volumeMounts:
             - name: redis-data
               mountPath: /data
-      volumes:
-        - name: redis-data
-          persistentVolumeClaim:
-            claimName: redis-pvc
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+        storageClassName: standard-rwo
 ---
+# Headless service required by the StatefulSet for stable per-pod DNS
+# (redis-0.redis-headless, redis-1.redis-headless, ...).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+  namespace: rag-yeni
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# Load-balancing ClusterIP the app connects to (REDIS_URL=redis://redis:6379) —
+# kept so existing app config doesn't need to change, though see the warning
+# above about cross-pod consistency.
 apiVersion: v1
 kind: Service
 metadata:
