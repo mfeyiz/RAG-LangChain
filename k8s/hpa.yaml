@@ -8,8 +8,16 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: rag-langchain
-  minReplicas: 3
-  maxReplicas: 3
+  # Temporarily pinned at 2 (not 3): the europe-west4 SSD_TOTAL_GB quota is
+  # maxed out, so any attempt at a 3rd replica across kafka/postgres/redis/
+  # rag-langchain/rag-worker leaves pods permanently Pending and fights any
+  # manual scale-down back to a stable state. Bump back to 3 once the quota
+  # increase (GCP Console → IAM & Admin → Quotas → SSD_TOTAL_GB,
+  # europe-west4) has actually landed — and bump k8s/deployment.yaml,
+  # k8s/worker-deployment.yaml, k8s/redis.yaml, k8s/postgres.yaml, and
+  # k8s/kafka.yaml's `replicas:` back to 3 at the same time.
+  minReplicas: 2
+  maxReplicas: 2
   metrics:
     - type: Resource
       resource:
