@@ -1464,7 +1464,17 @@ function parseSseFrame(frame) {
 
     frame.split(/\r?\n/).forEach((line) => {
         if (line.startsWith("event:")) event = line.slice(6).trim();
-        if (line.startsWith("data:"))  dataLines.push(line.slice(5).trimStart());
+        if (line.startsWith("data:")) {
+            // Per the SSE spec, only the single delimiter space after "data:" is
+            // stripped — not all leading whitespace. Token chunks from the LLM
+            // routinely start with a real, meaningful space (e.g. " world"),
+            // and trimStart() was eating it, gluing streamed words together
+            // until the final "message" event replaced the text with the
+            // correctly-spaced full answer.
+            let field = line.slice(5);
+            if (field.startsWith(" ")) field = field.slice(1);
+            dataLines.push(field);
+        }
     });
 
     if (!dataLines.length) return null;
