@@ -4,7 +4,10 @@ metadata:
   name: rag-langchain-backend
   namespace: rag-yeni
 spec:
-  timeoutSec: 300
+  # Long-running SSE responses (AI report generation with revision loops,
+  # "detailed" length) can run past 5 minutes — give the LB enough headroom
+  # that it doesn't cut the connection before the backend finishes.
+  timeoutSec: 900
   connectionDraining:
     drainingTimeoutSec: 30
   healthCheck:

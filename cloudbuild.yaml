@@ -101,7 +101,9 @@ steps:
           kubectl rollout restart deployment/rag-langchain-frontend -n "$_GKE_NAMESPACE"
           kubectl rollout status deployment/rag-langchain-frontend -n "$_GKE_NAMESPACE" --timeout=120s
         else
-          sed -i "s#europe-west3-docker.pkg.dev/PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest#$$IMAGE:$SHORT_SHA#g" k8s/deployment.yaml
+          sed -i "s#europe-west3-docker.pkg.dev/PROJECT_ID/$_AR_REPOSITORY/$_SERVICE_NAME:latest#$$IMAGE:$SHORT_SHA#g" \
+            k8s/deployment.yaml k8s/worker-deployment.yaml
           kubectl apply -k k8s
           kubectl rollout status deployment/$_SERVICE_NAME -n "$_GKE_NAMESPACE" --timeout=300s
+          kubectl rollout status deployment/rag-worker -n "$_GKE_NAMESPACE" --timeout=300s
         fi
