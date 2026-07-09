@@ -14,7 +14,7 @@ metadata:
   namespace: rag-yeni
 spec:
   serviceName: redis-headless
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: redis

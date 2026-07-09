@@ -31,7 +31,7 @@ spec:
   # required both for KRaft's controller quorum voter addresses and for each
   # broker to advertise its own reachable address to clients.
   serviceName: kafka
-  replicas: 3
+  replicas: 2
   # KRaft's raft quorum needs a majority of voters online to elect a leader
   # (2 of 3 here) before ANY of them can report Ready. The default OrderedReady
   # policy only creates kafka-N+1 once kafka-N is Ready — which kafka-0 alone

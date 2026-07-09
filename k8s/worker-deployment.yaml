@@ -12,7 +12,7 @@ spec:
   # consumer-lag-based autoscaling (e.g. via KEDA) is the right mechanism here
   # and is explicit future work, not v1. Fixed at 3 for now (see KAFKA_NUM_PARTITIONS
   # in kafka.yaml — 3 partitions means a 4th consumer in this group would sit idle).
-  replicas: 3
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
