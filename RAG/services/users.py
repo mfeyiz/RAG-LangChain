@@ -104,6 +104,20 @@ def verify_credentials(username: str, password: str) -> str | None:
     return None
 
 
+def count_users() -> int:
+    """Number of registered users. Returns -1 if the store is unavailable."""
+    if not ensure_users_schema():
+        return -1
+    pool = vector_store.get_pool()
+    try:
+        with pool.connection() as conn:
+            row = conn.execute(f"SELECT count(*) FROM {TABLE}").fetchone()
+        return int(row[0]) if row else 0
+    except Exception as exc:
+        print(f"[Users] count_users failed: {exc}")
+        return -1
+
+
 def ensure_admin_seed() -> None:
     """Seed/refresh the bootstrap admin from ADMIN_USERNAME / ADMIN_PASSWORD env."""
     username = os.getenv("ADMIN_USERNAME", "").strip()

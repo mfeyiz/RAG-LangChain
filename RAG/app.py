@@ -155,6 +155,11 @@ class RegisterRequest(BaseModel):
     role: str = "user"
 
 
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+
+
 @app.post("/auth/login")
 async def login(body: LoginRequest):
     """Exchange username/password for a signed JWT used by @update and admin APIs."""
@@ -184,6 +189,33 @@ async def register(body: RegisterRequest, request: Request):
     if not ok:
         return JSONResponse({"error": "Could not create user."}, status_code=400)
     return {"ok": True, "username": body.username, "role": role}
+
+
+@app.post("/auth/signup")
+async def signup(body: SignupRequest):
+    """Public bootstrap sign-up. Only works while no users exist yet — the
+    first account created this way becomes admin. Once a user exists, further
+    accounts must be created by an admin via /auth/register, since open
+    self-signup would let anyone grant themselves access to this instance."""
+    if not auth_configured():
+        return JSONResponse(
+            {"error": "Authentication not configured (JWT_SECRET not set)."},
+            status_code=503,
+        )
+
+    existing = await asyncio.to_thread(users.count_users)
+    if existing != 0:
+        return JSONResponse(
+            {"error": "Sign-up is closed. Ask an existing admin to create your account."},
+            status_code=403,
+        )
+
+    ok = await asyncio.to_thread(users.create_user, body.username, body.password, "admin")
+    if not ok:
+        return JSONResponse({"error": "Could not create account."}, status_code=400)
+
+    token = create_access_token(sub=body.username, role="admin")
+    return {"token": token, "role": "admin", "username": body.username}
 
 
 # ── Ask (SSE with token streaming) ───────────────────────────────────────────
