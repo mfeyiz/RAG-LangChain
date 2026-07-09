@@ -136,6 +136,13 @@ metadata:
   namespace: rag-yeni
 spec:
   clusterIP: None
+  # Headless services only publish per-pod DNS (kafka-N.kafka...) for Ready
+  # pods by default. But no broker can become Ready (readinessProbe on 9092)
+  # until it can resolve and reach its peers to form the raft quorum — a
+  # deadlock discovered live (kafka-0/kafka-1 both crash-looping forever on
+  # UnknownHostException for each other). Publish addresses before readiness
+  # so peer discovery can actually happen.
+  publishNotReadyAddresses: true
   selector:
     app: kafka
   ports:
