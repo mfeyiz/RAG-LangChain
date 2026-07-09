@@ -111,6 +111,7 @@ const AGENT_MESSAGES = {
 
 /* ── Auth state ──────────────────────────────────────────────── */
 const AUTH_LOGIN_URL = "/auth/login";
+const AUTH_SIGNUP_URL = "/auth/signup";
 let authToken = localStorage.getItem("rag_auth_token") || "";
 let authUser  = localStorage.getItem("rag_auth_user")  || "";
 
@@ -803,6 +804,12 @@ const authForm        = document.getElementById("authForm");
 const authUsername    = document.getElementById("authUsername");
 const authPassword    = document.getElementById("authPassword");
 const authError       = document.getElementById("authError");
+const authModalTitle  = document.getElementById("authModalTitle");
+const authHint        = document.getElementById("authHint");
+const authSubmit      = document.getElementById("authSubmit");
+const authSwitch      = document.getElementById("authSwitch");
+
+let authMode = "login"; // "login" | "signup"
 
 function renderAuthState() {
     if (!authButtonLabel) return;
@@ -812,10 +819,33 @@ function renderAuthState() {
         : "Sign in";
 }
 
+function applyAuthMode() {
+    if (!authModal) return;
+    if (authMode === "signup") {
+        authModalTitle.textContent = "Sign Up";
+        authHint.textContent = "Create the first account for this instance — it becomes admin.";
+        authSubmit.textContent = "Sign up";
+        authSwitch.innerHTML = 'Already have an account? <button type="button" id="authSwitchBtn" class="auth-switch-btn">Log in</button>';
+    } else {
+        authModalTitle.textContent = "Log In";
+        authHint.textContent = "Login is required to update documents with @update.";
+        authSubmit.textContent = "Log in";
+        authSwitch.innerHTML = 'No account yet? <button type="button" id="authSwitchBtn" class="auth-switch-btn">Sign up</button>';
+    }
+    // innerHTML replace drops the old button + its listener; re-bind the new one.
+    document.getElementById("authSwitchBtn").addEventListener("click", () => {
+        authMode = authMode === "login" ? "signup" : "login";
+        authError.hidden = true;
+        applyAuthMode();
+    });
+}
+
 function openAuthModal() {
     if (!authModal) return;
+    authMode = "login";
     authError.hidden = true;
     authForm.reset();
+    applyAuthMode();
     authModal.hidden = false;
     authUsername.focus();
 }
@@ -844,21 +874,24 @@ if (authForm) {
         const password = authPassword.value;
         if (!username || !password) return;
 
+        const url = authMode === "signup" ? AUTH_SIGNUP_URL : AUTH_LOGIN_URL;
         try {
-            const res = await fetch(AUTH_LOGIN_URL, {
+            const res = await fetch(url, {
                 method:  "POST",
                 headers: { "Content-Type": "application/json" },
                 body:    JSON.stringify({ username, password }),
             });
             const data = await res.json();
             if (!res.ok) {
-                authError.textContent = data.error || "Sign-in failed.";
+                authError.textContent = data.error || (authMode === "signup" ? "Sign-up failed." : "Sign-in failed.");
                 authError.hidden = false;
                 return;
             }
             setAuth(data.token, data.username || username);
             closeAuthModal();
-            logEvent("auth", `Signed in as ${data.username || username}.`);
+            logEvent("auth", authMode === "signup"
+                ? `Signed up as ${data.username || username} (admin).`
+                : `Signed in as ${data.username || username}.`);
         } catch (err) {
             authError.textContent = "Could not reach the server.";
             authError.hidden = false;

@@ -900,12 +900,48 @@ h1, h2 {
     }
 }
 
+/* Top bar packs brand + tab nav + action buttons into one row, which only
+   fits on wide viewports. Below 900px let it wrap onto its own lines instead
+   of overflowing horizontally. */
+@media (max-width: 900px) {
+    .top-bar {
+        flex-wrap: wrap;
+        height: auto;
+        min-height: 64px;
+        row-gap: 10px;
+        padding: 12px 16px;
+    }
+    .top-tabs {
+        order: 3;
+        flex-basis: 100%;
+        justify-content: center;
+    }
+    .top-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        row-gap: 8px;
+    }
+}
+
 @media (max-width: 600px) {
-    .top-bar { padding: 0 16px; }
+    .top-bar { padding: 10px 16px; }
     .brand-subtitle { display: none; }
     .workspace { padding: 16px; gap: 16px; }
     .chat-messages { padding: 22px 18px 4px; }
     .message-content { max-width: 86%; }
+}
+
+/* Very narrow phones: collapse action-button labels to icon-only (the icon's
+   own font-size is set explicitly so it survives the parent's font-size: 0). */
+@media (max-width: 420px) {
+    .top-actions .ghost-button {
+        font-size: 0;
+        width: 38px;
+        padding: 0;
+        justify-content: center;
+        gap: 0;
+    }
+    .status-pill { padding: 0 10px; }
 }
 
 /* ── Composer input wrap ──────────────────────────────────────── */
@@ -1049,6 +1085,25 @@ h1, h2 {
     font-size: 13px;
     margin-top: 4px;
 }
+
+.auth-switch {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+}
+
+.auth-switch-btn {
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+}
+
+.auth-switch-btn:hover { text-decoration: underline; }
 
 .primary-button {
     margin-top: 14px;
@@ -3110,4 +3165,10 @@ body.cite-open .workspace {
     .editor-view { grid-template-columns: 1fr !important; height: auto; }
     .report-chat-rail { max-height: none; }
     .report-hero { min-height: 70vh; }
+}
+@media (max-width: 600px) {
+    .editor-view, .library-view { padding: 12px; }
+    .editor-page { padding: 32px 20px; }
+    .editor-outline-panel { position: absolute; z-index: 40; height: 100%; box-shadow: var(--shadow); }
+    .library-content, .editor-content { padding: 14px; }
 }
