@@ -1,4 +1,4 @@
-# 3-broker KRaft cluster. All 3 pods share one StatefulSet pod template, so
+# 2-broker KRaft cluster. Both pods share one StatefulSet pod template, so
 # KAFKA_NODE_ID and KAFKA_ADVERTISED_LISTENERS (which MUST differ per pod)
 # can't be plain static env vars like the old single-node config used — the
 # command below derives them from the pod's ordinal (parsed out of its own
@@ -7,14 +7,14 @@
 #
 # DEPLOY STEP THIS CANNOT DO FOR YOU — REQUIRED ONE-TIME MANUAL ACTION:
 #   The existing kafka-0 already has a KRaft metadata log formatted for a
-#   single-voter quorum ("1@kafka-0...:9093" only). KRaft does not support
-#   growing an already-formatted single-node quorum into a 3-node one by
-#   just changing KAFKA_CONTROLLER_QUORUM_VOTERS and re-applying — kafka-0
-#   would keep rejecting kafka-1/kafka-2 as unknown voters. Before applying
-#   this manifest, delete the existing broker's data so all 3 bootstrap the
-#   3-voter quorum together from scratch:
+#   quorum that includes a voter (kafka-2) this manifest no longer defines.
+#   KRaft does not support shrinking an already-formatted quorum by just
+#   changing KAFKA_CONTROLLER_QUORUM_VOTERS and re-applying — kafka-0 would
+#   keep waiting on the now-nonexistent kafka-2 voter. Before applying this
+#   manifest, delete the existing brokers' data so both bootstrap the
+#   2-voter quorum together from scratch:
 #     kubectl delete statefulset kafka -n rag-yeni --cascade=orphan
-#     kubectl delete pvc kafka-data-kafka-0 -n rag-yeni
+#     kubectl delete pvc kafka-data-kafka-0 kafka-data-kafka-1 -n rag-yeni
 #     kubectl apply -k k8s/
 #   Only in-flight/unconsumed job-queue messages (pending report-generation
 #   jobs — see RAG/services/job_queue.py) are lost; no document/user data
@@ -74,23 +74,28 @@ spec:
               value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
               value: "PLAINTEXT"
-            # Static list of all 3 voters — same value on every pod. Node IDs
-            # here (1/2/3) must line up with KAFKA_NODE_ID = ordinal + 1 above
-            # (kafka-0 -> 1, kafka-1 -> 2, kafka-2 -> 3).
+            # Static list of both voters — same value on every pod. Node IDs
+            # here (1/2) must line up with KAFKA_NODE_ID = ordinal + 1 above
+            # (kafka-0 -> 1, kafka-1 -> 2).
             - name: KAFKA_CONTROLLER_QUORUM_VOTERS
-              value: "1@kafka-0.kafka.rag-yeni.svc.cluster.local:9093,2@kafka-1.kafka.rag-yeni.svc.cluster.local:9093,3@kafka-2.kafka.rag-yeni.svc.cluster.local:9093"
-            # 3 brokers now actually back each other up, so replicate for real
-            # instead of the single-node replication-factor-1 placeholders.
+              value: "1@kafka-0.kafka.rag-yeni.svc.cluster.local:9093,2@kafka-1.kafka.rag-yeni.svc.cluster.local:9093"
+            # Replication factor can't exceed the broker count (2 here) — the
+            # old value of 3 left __consumer_offsets/transaction-state-log
+            # permanently uncreatable, which meant no consumer group could
+            # ever get a coordinator (jobs queued in rag.jobs sat unread).
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-              value: "3"
-            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
-              value: "3"
-            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
               value: "2"
-            # Matches the 3 rag-worker replicas (worker-deployment.yaml) 1:1 —
-            # a 4th consumer in that group would otherwise sit permanently idle.
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "2"
+            # min.isr = replicas would block all writes the moment either
+            # broker restarts (these two have been restart-prone). 1 keeps
+            # writes available with only one broker in sync.
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            # Matches the 2 rag-worker replicas (worker-deployment.yaml) 1:1 —
+            # a 3rd consumer in that group would otherwise sit permanently idle.
             - name: KAFKA_NUM_PARTITIONS
-              value: "3"
+              value: "2"
             # Fixed cluster ID, generated once — required for KRaft storage
             # bootstrap (`kafka-storage.sh format`), which the official image's
             # entrypoint runs automatically on first boot using this value.
