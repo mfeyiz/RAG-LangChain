@@ -162,7 +162,10 @@ async def run_report_job(
 
         # Write the markdown FIRST and signal completion so the report is
         # viewable immediately; the heavier reindex + PDF/DOCX + commit runs
-        # afterwards while the caller's stream stays open.
+        # afterwards while the caller's stream stays open. ensure_dirs() is
+        # needed here because the Kafka worker process (unlike RAG/app.py)
+        # never runs the startup path that creates data/workspace/markdown.
+        paths.ensure_dirs()
         paths.workspace_md_path(source).write_text(full_markdown, encoding="utf-8")
         report_registry.record(source, title, template, generated=True)
 
