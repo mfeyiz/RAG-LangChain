@@ -6,6 +6,7 @@ import httpx
 TAVILY_API_URL = "https://api.tavily.com/search"
 _MAX_RESULTS = int(os.getenv("TAVILY_MAX_RESULTS", "5"))
 _TIMEOUT = float(os.getenv("TAVILY_TIMEOUT_SECONDS", "8"))
+_MAX_QUERY_CHARS = 400  # Tavily hard limit; longer queries get a 400 Bad Request.
 
 
 def web_search_available() -> bool:
@@ -24,7 +25,7 @@ def web_search(query: str) -> dict:
         return {"context": "", "sources": [], "answer": ""}
 
     payload = {
-        "query": query,
+        "query": query[:_MAX_QUERY_CHARS],
         "max_results": _MAX_RESULTS,
         "search_depth": "basic",
         "include_answer": True,
