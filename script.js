@@ -73,6 +73,9 @@ const newReportAIPrompt = document.getElementById("newReportAIPrompt");
 const aiGenStatusWrap   = document.getElementById("aiGenStatusWrap");
 const aiGenStatusText   = document.getElementById("aiGenStatusText");
 const aiGenProgressFill = document.getElementById("aiGenProgressFill");
+const aiGenProgressBar  = document.getElementById("aiGenProgressBar");
+const aiGenStages       = document.getElementById("aiGenStages");
+const aiGenElapsed      = document.getElementById("aiGenElapsed");
 const aiGenLogs         = document.getElementById("aiGenLogs");
 const newReportActions  = document.getElementById("newReportActions");
 const blockGrid         = document.getElementById("blockGrid");
@@ -3116,7 +3119,7 @@ function openNewReportModal() {
     newReportModal.hidden = false;
     setTimeout(() => newReportTitle.focus(), 30);
 }
-function closeNewReportModal() { newReportModal.hidden = true; }
+function closeNewReportModal() { newReportModal.hidden = true; _stopAiGenTimer(); }
 
 if (newReportBtn) newReportBtn.addEventListener("click", openNewReportModal);
 if (newReportClose) newReportClose.addEventListener("click", closeNewReportModal);
@@ -3270,10 +3273,69 @@ async function createNewReportAI(title, topic, template, opts = {}) {
 }
 
 /* ── AI report generation progress helpers ──────────────────────── */
+// The report graph only emits `status` events (plus a burst of `section_start`
+// at outline time) — it never signals per-section completion, so a numeric
+// progress bar has nothing to advance on and just looks frozen through the
+// multi-minute research→write→review loop. Instead we drive a stage stepper
+// off the status text and keep the bar indeterminate + an elapsed clock so the
+// panel always reads as "actively working".
+const _AI_GEN_STAGES = ["planning", "research", "writing", "review", "finalize"];
+let _aiGenTimer = null;
+let _aiGenStartedAt = 0;
+let _aiGenStageIdx = -1;
+
+function _stageFromMessage(msg) {
+    const m = (msg || "").toLowerCase();
+    if (m.includes("chart") || m.includes("index") || m.includes("export") || m.includes("finaliz")) return "finalize";
+    if (m.includes("review")) return "review";
+    if (m.includes("writing") || m.includes("revis")) return "writing";
+    if (m.includes("evidence") || m.includes("research")) return "research";
+    if (m.includes("outline") || m.includes("planning")) return "planning";
+    return "";
+}
+
+function _setAiGenStage(stage) {
+    if (!aiGenStages || !stage) return;
+    const idx = _AI_GEN_STAGES.indexOf(stage);
+    if (idx < 0) return;
+    // Status messages aren't strictly ordered; never let a late keyword match
+    // drag the stepper backwards.
+    if (idx < _aiGenStageIdx) return;
+    _aiGenStageIdx = idx;
+    aiGenStages.querySelectorAll("li").forEach((li) => {
+        const li_idx = _AI_GEN_STAGES.indexOf(li.dataset.stage);
+        li.classList.toggle("is-done", li_idx < idx);
+        li.classList.toggle("is-active", li_idx === idx);
+    });
+}
+
+function _fmtElapsed(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function _startAiGenTimer() {
+    _aiGenStartedAt = Date.now();
+    if (aiGenElapsed) aiGenElapsed.textContent = "0:00";
+    _stopAiGenTimer();
+    _aiGenTimer = setInterval(() => {
+        if (aiGenElapsed) aiGenElapsed.textContent = _fmtElapsed(Math.floor((Date.now() - _aiGenStartedAt) / 1000));
+    }, 1000);
+}
+
+function _stopAiGenTimer() {
+    if (_aiGenTimer) { clearInterval(_aiGenTimer); _aiGenTimer = null; }
+}
+
 function _resetAiGenProgress() {
     if (aiGenStatusText) aiGenStatusText.textContent = "Planning outline…";
-    if (aiGenProgressFill) aiGenProgressFill.style.width = "0%";
+    if (aiGenProgressFill) aiGenProgressFill.style.width = "";
+    if (aiGenProgressBar) aiGenProgressBar.classList.add("is-indeterminate");
     if (aiGenLogs) aiGenLogs.innerHTML = "";
+    _aiGenStageIdx = -1;
+    _setAiGenStage("planning");
+    _startAiGenTimer();
 }
 
 function _appendAiGenLog(message) {
@@ -3285,16 +3347,8 @@ function _appendAiGenLog(message) {
     aiGenLogs.scrollTop = aiGenLogs.scrollHeight;
 }
 
-function _setAiGenProgress(done, total) {
-    if (!aiGenProgressFill || !total) return;
-    // Cap at 95% until the `complete` event so the bar never reads "done" early.
-    const pct = Math.min(95, Math.round((Math.min(done, total) / total) * 100));
-    aiGenProgressFill.style.width = `${pct}%`;
-}
-
 async function runReportGeneration(res, title) {
     let sectionsTotal = 0;
-    let sectionsDone = 0;
     let finished = false;
     try {
         const reader = res.body.getReader();
@@ -3331,19 +3385,21 @@ async function runReportGeneration(res, title) {
                 if (event === "status") {
                     if (payload.message && aiGenStatusText) aiGenStatusText.textContent = payload.message;
                     if (payload.message) _appendAiGenLog(payload.message);
+                    _setAiGenStage(_stageFromMessage(payload.message));
                 } else if (event === "section_start") {
                     sectionsTotal += 1;
                     if (payload.title) _appendAiGenLog(`• ${payload.title}`);
                     if (aiGenStatusText) aiGenStatusText.textContent = `Outline: ${sectionsTotal} section(s)…`;
                 } else if (event === "section_complete") {
-                    sectionsDone += 1;
                     if (payload.title) _appendAiGenLog(`✓ ${payload.title}`);
-                    _setAiGenProgress(sectionsDone, sectionsTotal);
-                    if (aiGenStatusText) {
-                        aiGenStatusText.textContent = `Writing sections… (${Math.min(sectionsDone, sectionsTotal)}/${sectionsTotal})`;
-                    }
                 } else if (event === "complete") {
                     finished = true;
+                    _stopAiGenTimer();
+                    _setAiGenStage("finalize");
+                    if (aiGenStages) aiGenStages.querySelectorAll("li").forEach((li) => {
+                        li.classList.remove("is-active"); li.classList.add("is-done");
+                    });
+                    if (aiGenProgressBar) aiGenProgressBar.classList.remove("is-indeterminate");
                     if (aiGenProgressFill) aiGenProgressFill.style.width = "100%";
                     if (aiGenStatusText) aiGenStatusText.textContent = "Report ready.";
                     closeNewReportModal();
@@ -3362,6 +3418,7 @@ async function runReportGeneration(res, title) {
         }
         if (!finished) throw new Error("Stream ended before the report was ready.");
     } catch (err) {
+        _stopAiGenTimer();
         // If the modal is still open, surface the error inline; otherwise toast.
         if (newReportModal && !newReportModal.hidden) {
             if (aiGenStatusWrap) aiGenStatusWrap.hidden = true;
