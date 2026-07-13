@@ -614,13 +614,22 @@
                 </div>
 
                 <div class="ai-gen-status-wrap" id="aiGenStatusWrap" hidden>
+                    <ol class="ai-gen-stages" id="aiGenStages">
+                        <li data-stage="planning"><span class="ai-gen-stage-dot"></span><span class="ai-gen-stage-label">Planning</span></li>
+                        <li data-stage="research"><span class="ai-gen-stage-dot"></span><span class="ai-gen-stage-label">Researching</span></li>
+                        <li data-stage="writing"><span class="ai-gen-stage-dot"></span><span class="ai-gen-stage-label">Writing</span></li>
+                        <li data-stage="review"><span class="ai-gen-stage-dot"></span><span class="ai-gen-stage-label">Reviewing</span></li>
+                        <li data-stage="finalize"><span class="ai-gen-stage-dot"></span><span class="ai-gen-stage-label">Finalizing</span></li>
+                    </ol>
                     <div class="ai-gen-status-header">
                         <div class="ai-gen-spinner"></div>
-                        <span class="ai-gen-status-text" id="aiGenStatusText">Planning outline...</span>
+                        <span class="ai-gen-status-text" id="aiGenStatusText">Planning outline…</span>
+                        <span class="ai-gen-elapsed" id="aiGenElapsed">0:00</span>
                     </div>
-                    <div class="ai-gen-progress-bar">
-                        <div class="ai-gen-progress-fill" id="aiGenProgressFill" style="width: 0%"></div>
+                    <div class="ai-gen-progress-bar is-indeterminate" id="aiGenProgressBar">
+                        <div class="ai-gen-progress-fill" id="aiGenProgressFill"></div>
                     </div>
+                    <p class="ai-gen-hint">Bu birkaç dakika sürebilir. Modalı kapatsanız bile rapor arka planda hazırlanmaya devam eder.</p>
                     <div class="ai-gen-logs" id="aiGenLogs"></div>
                 </div>
 

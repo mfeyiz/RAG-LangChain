@@ -2788,7 +2788,76 @@ body.cite-open .workspace {
     font-weight: 600;
     color: var(--ink);
 }
+.ai-gen-elapsed {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+.ai-gen-stages {
+    display: flex;
+    justify-content: space-between;
+    list-style: none;
+    margin: 0;
+    padding: 0 4px;
+    position: relative;
+}
+.ai-gen-stages::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 12px;
+    right: 12px;
+    height: 2px;
+    background: var(--border);
+    z-index: 0;
+}
+.ai-gen-stages li {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    z-index: 1;
+}
+.ai-gen-stage-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    transition: background .3s ease, border-color .3s ease, box-shadow .3s ease;
+}
+.ai-gen-stage-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-align: center;
+}
+.ai-gen-stages li.is-done .ai-gen-stage-dot,
+.ai-gen-stages li.is-active .ai-gen-stage-dot {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+.ai-gen-stages li.is-done .ai-gen-stage-label { color: var(--text); }
+.ai-gen-stages li.is-active .ai-gen-stage-label { color: var(--ink); }
+.ai-gen-stages li.is-active .ai-gen-stage-dot {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+    animation: aiGenPulse 1.3s ease-in-out infinite;
+}
+@keyframes aiGenPulse {
+    0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent); }
+    50%      { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 6%, transparent); }
+}
+.ai-gen-hint {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.4;
+}
 .ai-gen-progress-bar {
+    position: relative;
     width: 100%;
     height: 6px;
     background: var(--border);
@@ -2801,6 +2870,14 @@ body.cite-open .workspace {
     width: 0%;
     border-radius: 99px;
     transition: width .3s ease-in-out;
+}
+.ai-gen-progress-bar.is-indeterminate .ai-gen-progress-fill {
+    width: 35%;
+    animation: aiGenSlide 1.4s ease-in-out infinite;
+}
+@keyframes aiGenSlide {
+    0%   { transform: translateX(-120%); }
+    100% { transform: translateX(320%); }
 }
 .ai-gen-logs {
     max-height: 120px;

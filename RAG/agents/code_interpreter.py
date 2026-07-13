@@ -5,11 +5,14 @@ data ("find the average profit margin for the last 3 years", "turn this data int
 a pie chart and add it to the document"), the Researcher gathers the relevant tables and the
 supervisor routes the turn through this node BEFORE the writer.
 
-Execution model: a sandboxed subprocess running a stock python interpreter with
-only the table CSVs exposed as pandas DataFrames (`tables`) plus matplotlib for
-charts. The LLM generates the python snippet; this node runs it. Hard timeout
-and a filesystem jail (only the workspace images dir is writable) keep things
-contained. No network, no arbitrary file writes outside the chart directory.
+Execution model: the LLM generates a python snippet operating on the provided
+tables (exposed as pandas DataFrames in `tables`) plus matplotlib for charts.
+Before execution the snippet is statically validated (`_validate_snippet`): any
+import, dunder attribute/name access, or call to a dangerous builtin (eval, exec,
+open, getattr, __import__, …) is rejected outright, so the snippet cannot reach
+`os`/`sys`/`subprocess` or the interpreter internals. The validated snippet then
+runs in a subprocess with a hard timeout. Treat all snippet text as hostile: it
+is derived from LLM output over an untrusted user query.
 
 Outputs:
 - `calc_result`  : a textual result the Writer folds into its answer.
@@ -20,6 +23,7 @@ Outputs:
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -132,6 +136,67 @@ def _extract_code(text: str) -> str:
     return (fence.group(1) if fence else text).strip()
 
 
+# Builtins that can break out of the pandas/matplotlib environment (reach the
+# interpreter internals, the filesystem, or dynamic code execution) and so must
+# never appear in a generated snippet.
+_FORBIDDEN_CALLS = frozenset(
+    {
+        "eval", "exec", "compile", "open", "__import__", "getattr", "setattr",
+        "delattr", "globals", "locals", "vars", "input", "breakpoint", "exit",
+        "quit", "memoryview",
+    }
+)
+
+# Attribute names that reach deserialization, the network, or an expression-eval
+# engine THROUGH the pre-bound pandas objects — the AST import/builtin checks
+# don't catch these because `pd`/`df` are already in scope. `read_pickle`/
+# `to_pickle` give arbitrary code execution (pickle); the rest of the `read_*`/
+# `to_*` I/O family accepts URLs and local paths; `eval`/`query` execute
+# expression strings. `plt.savefig(CHART_PATH)` is deliberately NOT here — the
+# codegen prompt requires it to persist charts, and CHART_PATH is app-controlled.
+_FORBIDDEN_ATTRS = frozenset(
+    {
+        "eval", "query", "read_pickle", "to_pickle", "read_csv", "to_csv",
+        "read_json", "to_json", "read_parquet", "to_parquet", "read_excel",
+        "to_excel", "read_table", "read_html", "read_hdf", "to_hdf",
+        "read_feather", "to_feather", "read_orc", "read_sql", "to_sql",
+        "read_fwf", "read_stata", "to_stata", "read_sas", "read_spss",
+        "read_gbq", "read_xml", "to_xml", "read_clipboard", "to_clipboard",
+        "to_html", "to_string", "to_latex", "to_markdown",
+    }
+)
+
+
+def _validate_snippet(snippet: str) -> str | None:
+    """Reject a snippet that could escape the pandas/matplotlib environment.
+
+    Returns None if safe, else a short human-readable reason. The loader already
+    provides pandas/matplotlib, so a legitimate snippet needs no imports; any
+    import, dunder access, dangerous builtin call, or use of a pandas I/O
+    attribute (which reaches disk, network, or pickle) is therefore hostile.
+    """
+    try:
+        tree = ast.parse(snippet)
+    except SyntaxError as exc:
+        return f"snippet is not valid python: {exc.msg}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return "imports are not allowed"
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith("__"):
+                return f"access to '{node.attr}' is not allowed"
+            if node.attr in _FORBIDDEN_ATTRS:
+                return f"use of '{node.attr}' is not allowed"
+        if isinstance(node, ast.Name) and node.id.startswith("__"):
+            return f"access to '{node.id}' is not allowed"
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in _FORBIDDEN_CALLS:
+                return f"call to '{func.id}' is not allowed"
+    return None
+
+
 def _run_snippet(snippet: str, tables: list[dict], chart_path: str) -> tuple[str, bool]:
     """Execute the LLM-generated snippet in a subprocess sandbox.
 
@@ -139,6 +204,10 @@ def _run_snippet(snippet: str, tables: list[dict], chart_path: str) -> tuple[str
     is captured from the namespace. Pandas/matplotlib are imported inside the
     sandbox so we don't hard-depend on them at import time of this module.
     """
+    reason = _validate_snippet(snippet)
+    if reason is not None:
+        return (f"Refused to run generated code: {reason}.", False)
+
     # Build the `tables` dict literal outside any f-string to avoid backslashes
     # (which are a SyntaxError inside f-string expressions pre-3.12).
     _table_entries = ", ".join(
